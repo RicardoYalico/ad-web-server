@@ -75,8 +75,8 @@ async function spDA002Limpiar() {
             $switch: {
               branches: [
                 { case: { $eq: ['$metEdu', 'P'] }, then: 'Presencial' },
-                { case: { $eq: ['$metEdu', 'R'] }, then: 'Virtual síncrono' },
-                { case: { $eq: ['$metEdu', 'V'] }, then: 'Virtual asíncrono' },
+                { case: { $eq: ['$metEdu', 'R'] }, then: 'Virtual Síncrono' },
+                { case: { $eq: ['$metEdu', 'V'] }, then: 'Virtual Asíncrono' },
                 { case: { $eq: ['$metEdu', 'H'] }, then: 'Híbrido' }
               ],
               default: 'Sin Definir'
@@ -95,27 +95,27 @@ async function spDA002Limpiar() {
           }
         }
       },
-      {
-        $lookup: {
-          from: 'supermallas',
-          let: { cursoCodigo: '$codCurso' },
-          pipeline: [{ $match: { $expr: { $and: [{ $eq: ['$codigoOficial', '$$cursoCodigo'] }, { $eq: ['$ciclo', '1'] }] } } }],
-          as: 'infoSupermallaArr'
-        }
-      },
-      { $addFields: { Ciclo: { $arrayElemAt: ['$infoSupermallaArr.ciclo', 0] } } },
-      { $match: { Ciclo: "1" } },
+      // {
+      //   $lookup: {
+      //     from: 'supermallas',
+      //     let: { cursoCodigo: '$codCurso' },
+      //     pipeline: [{ $match: { $expr: { $and: [{ $eq: ['$codigoOficial', '$$cursoCodigo'] }, { $eq: ['$ciclo', '1'] }] } } }],
+      //     as: 'infoSupermallaArr'
+      //   }
+      // },
+      // { $addFields: { Ciclo: { $arrayElemAt: ['$infoSupermallaArr.ciclo', 0] } } },
+      // { $match: { Ciclo: "1" } },
       // Agrupaciones
       {
         $group: {
-          _id: { periodo: "$periodo", idDocente: "$idDocente", RolColaborador: "$RolColaborador", programa: "$programa", modalidad: "$modalidad", Ciclo: "$Ciclo", nombreCurso: "$nombreCurso" },
+          _id: { periodo: "$periodo", idDocente: "$idDocente", docente: "$docente", RolColaborador: "$RolColaborador", programa: "$programa", modalidad: "$modalidad", nombreCurso: "$nombreCurso", codCurso: "$codCurso", seccion: "$seccion", periodo: "$periodo", nrc: "$nrc", metEdu: "$metEdu"},
           horarios: { $push: { fechaInicio: "$fechaInicio", fechaFin: "$fechaFin", dia: "$dia", hora: "$hora", turno: "$turno", edificio: "$edificio", campus: "$campus", aula: "$aula" } }
         }
       },
       {
         $group: {
-          _id: { periodo: "$_id.periodo", idDocente: "$_id.idDocente", RolColaborador: "$_id.RolColaborador", programa: "$_id.programa", modalidad: "$_id.modalidad", Ciclo: "$_id.Ciclo" },
-          cursos: { $push: { nombreCurso: "$_id.nombreCurso", horarios: "$horarios" } }
+          _id: { periodo: "$_id.periodo", idDocente: "$_id.idDocente", docente:"$_id.docente", RolColaborador: "$_id.RolColaborador", programa: "$_id.programa", modalidad: "$_id.modalidad" },
+          cursos: { $push: { nombreCurso: "$_id.nombreCurso", codCurso: "$_id.codCurso", seccion: "$_id.seccion", periodo: "$_id.periodo", nrc: "$_id.nrc", metEdu: "$_id.metEdu", horarios: "$horarios" } }
         }
       },
       // Proyección para limpiar la salida y facilitar el manejo en JS
@@ -124,6 +124,7 @@ async function spDA002Limpiar() {
           _id: 0,
           periodo: "$_id.periodo",
           idDocente: "$_id.idDocente",
+          docente: "$_id.docente",
           RolColaborador: "$_id.RolColaborador",
           programa: "$_id.programa",
           modalidad: "$_id.modalidad",
@@ -137,7 +138,7 @@ async function spDA002Limpiar() {
     // --- 2. OBTENER LOS DATOS DE LAS ENCUESTAS ---
     const encuestaCollection = db.collection('encuestaesas');
     const encuestas = await encuestaCollection.find({
-      tipoDeEncuesta: "Malla 2025" // Filtro principal
+      // tipoDeEncuesta: "Malla 2025" // Filtro principal
     }).project({ // Traer solo los campos necesarios
       codBanner: 1,
       programa: 1,
@@ -147,7 +148,6 @@ async function spDA002Limpiar() {
     }).toArray();
 
     // --- 3. CREAR UN MAPA PARA BÚSQUEDA RÁPIDA DE ESA ---
-    // La clave será "codBanner-programa-modalidad" para un acceso O(1)
     const encuestaMap = new Map();
     for (const encuesta of encuestas) {
       const key = `${encuesta.codBanner}-${encuesta.programa}-${encuesta.modalidad}`;
@@ -166,7 +166,6 @@ async function spDA002Limpiar() {
     });
 
     // --- 5. SELECCIONAR EL MEJOR REGISTRO POR DOCENTE ---
-    // Usamos reduce para agrupar por idDocente y quedarnos con el mejor.
     const docentesFinalesMap = new Map();
     for (const docente of docentesConEsa) {
       const id = docente.idDocente;
@@ -180,19 +179,40 @@ async function spDA002Limpiar() {
       }
     }
 
-    const resultadoFinal = Array.from(docentesFinalesMap.values());
+    const resultadoIntermedio = Array.from(docentesFinalesMap.values());
+    
+    // --- 6. OBTENER LOS DATOS DEL PLAN INTEGRAL ---
+    const planIntegralCollection = db.collection('planintegral');
+    const planesIntegrales = await planIntegralCollection.find({}).toArray();
+
+    // --- 7. CREAR UN MAPA PARA BÚSQUEDA RÁPIDA DEL PLAN INTEGRAL (PIDD) ---
+    const piddMap = new Map();
+    for (const plan of planesIntegrales) {
+      // La clave es el 'banner' para hacer match con 'idDocente'
+      piddMap.set(plan.banner, plan);
+    }
+    console.log(`Mapa de Plan Integral creado con ${piddMap.size} entradas.`);
+
+    // --- 8. UNIR LA INFORMACIÓN DEL PLAN INTEGRAL AL RESULTADO ---
+    const resultadoFinal = resultadoIntermedio.map(docente => {
+      const piddInfo = piddMap.get(docente.idDocente) || null; // Busca por idDocente (que es el banner)
+      return {
+        ...docente,
+        pidd: piddInfo // Añade la nueva columna 'pidd'
+      };
+    });
     
     console.log(`Procesamiento completado. Total de docentes únicos: ${resultadoFinal.length}`);
 
     // Opcional: Guardar el resultado en una nueva colección
-    // const resultCollection = db.collection('asignaciones');
-    // const fechaHoraEjecucion = new Date();
-    // const documentosAGuardar = resultadoFinal.map(doc => ({ ...doc, fechaHoraEjecucion }));
-    // if (documentosAGuardar.length > 0) {
-    //   await resultCollection.deleteMany({}); // Opcional: Limpiar antes de insertar
-    //   await resultCollection.insertMany(documentosAGuardar);
-    //   console.log(`${documentosAGuardar.length} documentos guardados en 'asignaciones'.`);
-    // }
+    const resultCollection = db.collection('asignaciones');
+    const fechaHoraEjecucion = new Date();
+    const documentosAGuardar = resultadoFinal.map(doc => ({ ...doc, fechaHoraEjecucion }));
+    if (documentosAGuardar.length > 0) {
+      await resultCollection.deleteMany({}); // Opcional: Limpiar antes de insertar
+      await resultCollection.insertMany(documentosAGuardar);
+      console.log(`${documentosAGuardar.length} documentos guardados en 'asignaciones'.`);
+    }
 
     return resultadoFinal;
 

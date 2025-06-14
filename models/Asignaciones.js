@@ -4,6 +4,7 @@ const AsignacionesEsaSchema = new mongoose.Schema({
   periodo: { type: String, trim: true },
   nombreCurso: { type: String, trim: true },
   idDocente: { type: String, trim: true },
+  docente: { type: String, trim: true },
   rolColaborador: { type: String, trim: true },
   programa: { type: String, trim: true },
   modalidad: { type: String, trim: true },

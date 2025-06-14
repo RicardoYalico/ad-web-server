@@ -12,6 +12,7 @@ router.get('/', async (req, res) => {
     if (req.query.periodo) query.periodo = req.query.periodo;
     if (req.query.nombreCurso) query.nombreCurso = req.query.nombreCurso;
     if (req.query.idDocente) query.idDocente = req.query.idDocente;
+    if (req.query.docente) query.docente = req.query.docente;
     if (req.query.rolColaborador) query.rolColaborador = req.query.rolColaborador;
     if (req.query.programa) query.programa = req.query.programa;
     if (req.query.modalidad) query.modalidad = req.query.modalidad;
