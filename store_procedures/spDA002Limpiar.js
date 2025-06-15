@@ -45,7 +45,7 @@ async function spDA002Limpiar() {
       { $match: { idPrinc: 'Y' } },
       {
         $lookup: {
-          from: 'reportesUnicosDocentes',
+          from: 'reporteUnicoDocentes',
           localField: 'idDocente',
           foreignField: 'codigoBanner',
           as: 'infoReporteDocenteArr'

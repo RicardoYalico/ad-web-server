@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 
 const ReporteUnicoDocenteSchema = new mongoose.Schema({
   // _id es generado automáticamente por MongoDB
+  semestre: { type: String, trim: true, default: '' },
+  fechaCarga: { type: String, trim: true, default: '' },
   codigoColaborador: {
     type: String,
     trim: true,
@@ -75,9 +77,8 @@ const ReporteUnicoDocenteSchema = new mongoose.Schema({
     default: ''
   }
 }, {
-  timestamps: true, // Agrega createdAt y updatedAt automáticamente
-  collection: 'reportesUnicosDocentes' // Nombre explícito para la colección (opcional)
+  timestamps: true, // Adds createdAt and updatedAt timestamps
 });
 
 // Evitar error de sobreescritura de modelo si ya existe (útil en entornos de desarrollo con HMR)
-module.exports = mongoose.models.ReporteUnicoDocente || mongoose.model('ReporteUnicoDocente', ReporteUnicoDocenteSchema);
+module.exports = mongoose.model('ReporteUnicoDocente', ReporteUnicoDocenteSchema);

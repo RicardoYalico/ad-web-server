@@ -2,6 +2,9 @@
 const mongoose = require('mongoose');
 
 const EncuestaEsaSchema = new mongoose.Schema({
+    // _id es generado automáticamente por MongoDB
+  semestre: { type: String, trim: true, default: '' },
+  fechaCarga: { type: String, trim: true, default: '' },
   grupoDocente: { type: String, trim: true, default: '' },
   tipoDeEncuesta: { type: String, trim: true, default: '' },
   modalidad: { type: String, trim: true, default: '' },

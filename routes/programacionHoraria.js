@@ -1,8 +1,52 @@
-// routes/docentes.js
 const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
-const Docente = require('../models/ProgramacionHoraria'); // El modelo ahora usa camelCase
+const ProgramacionHoraria = require('../models/ProgramacionHoraria'); // Modelo actualizado
+const busboy = require('busboy');
+const csv = require('csv-parser');
+
+router.get('/reporte', async (req, res) => {
+  try {
+    // Usamos el framework de agregación de MongoDB a través del modelo de Mongoose.
+    const reporte = await ProgramacionHoraria.aggregate([
+      {
+        // Etapa 1: Agrupar documentos por 'semestre' y 'fechaProgramacion'.
+        $group: {
+          _id: {
+            semestre: "$semestre",
+            fechaProgramacion: "$fechaProgramacion"
+          },
+          // Contar la cantidad de documentos en cada grupo.
+          cantidad: { $sum: 1 },
+          // Encontrar la fecha de actualización más reciente en cada grupo.
+          ultimaActualizacion: { $max: "$updatedAt" }
+        }
+      },
+      {
+        // Etapa 2: Reestructurar el formato de salida para que sea más claro.
+        $project: {
+          _id: 0, // Omitimos el campo _id del resultado final.
+          semestre: "$_id.semestre",
+          fechaProgramacion: "$_id.fechaProgramacion",
+          cantidad: "$cantidad",
+          ultimaActualizacion: "$ultimaActualizacion"
+        }
+      },
+      {
+        // Etapa 3 (Opcional): Ordenar los resultados para una mejor visualización.
+        $sort: {
+          semestre: 1, // Ordena por semestre de forma ascendente.
+          fechaProgramacion: 1 // Luego por fecha de programación.
+        }
+      }
+    ]); // No se necesita .toArray() al usar el método .aggregate() del modelo Mongoose.
+
+    res.json(reporte);
+  } catch (err) {
+    console.error('Error en la agregación:', err);
+    res.status(500).json({ message: 'Error al generar el reporte', error: err });
+  }
+});
 
 // GET: Obtener todos los registros con paginación y selección de campos
 router.get('/', async (req, res) => {
@@ -39,13 +83,13 @@ router.get('/', async (req, res) => {
       lean: true
     };
 
-    const docentesCargas = await Docente.find(query)
+    const docentesCargas = await ProgramacionHoraria.find(query)
       .select(selectFields)
       .limit(options.limit)
       .skip((options.page - 1) * options.limit)
       .lean();
 
-    const totalDocs = await Docente.countDocuments(query);
+    const totalDocs = await ProgramacionHoraria.countDocuments(query);
 
     res.json({
       data: docentesCargas,
@@ -98,39 +142,36 @@ router.post('/', async (req, res) => {
 
 // POST: Crear múltiples registros (carga masiva)
 router.post('/bulk', async (req, res) => {
-  // Se asume que req.body es un array de objetos, cada uno con claves en camelCase
+  // El cuerpo (req.body) de la petición DEBE ser un array de objetos (un lote).
   const recordsToInsert = req.body;
 
+  // Verificación básica de que el cuerpo es un array no vacío.
   if (!Array.isArray(recordsToInsert) || recordsToInsert.length === 0) {
     return res.status(400).json({ message: "El cuerpo de la solicitud debe ser un array de registros y no puede estar vacío." });
   }
 
+  console.log(`Recibiendo un lote para insertar ${recordsToInsert.length} registros.`);
+
   try {
-    // Mongoose validará usando el schema con campos camelCase
-    const result = await Docente.insertMany(recordsToInsert, { ordered: false });
+    // Insertamos el lote. 'ordered: false' intenta insertar todos los documentos
+    // posibles, incluso si uno falla (ej. por duplicado).
+    const result = await ProgramacionHoraria.insertMany(recordsToInsert, { ordered: false });
     res.status(201).json({
-      message: `${result.length} registros intentados para inserción.`,
-      insertedCount: result.length,
-      // 'result' es un array de los documentos insertados, con campos camelCase
+      message: `Lote procesado. Insertados exitosamente: ${result.length} de ${recordsToInsert.length} registros.`,
+      insertedCount: result.length
     });
   } catch (err) {
-    console.error("Error en carga masiva:", err);
-    if (err.name === 'MongoBulkWriteError' || err.code === 11000) {
-      const errorDetails = err.writeErrors
-        ? err.writeErrors.map(e => ({
-            index: e.index,
-            code: e.code,
-            message: e.errmsg,
-            // e.err.op contiene el documento que falló, con campos camelCase
-            failedDocumentPreview: e.err.op ? { nrc: e.err.op.nrc, idDocente: e.err.op.idDocente } : undefined
-          }))
-        : { generalMessage: err.message, code: err.code };
-      return res.status(400).json({
-        message: "Error durante la carga masiva. Algunos registros podrían no haberse insertado.",
-        details: errorDetails
-      });
-    }
-    res.status(500).json({ message: "Error interno del servidor durante la carga masiva: " + err.message });
+    // Este bloque se ejecuta si hay errores. Por ejemplo, si un documento
+    // duplicado causa un error, `err.writeErrors` contendrá los detalles.
+    console.error("Error durante la inserción del lote:", err.message);
+
+    const successfulInserts = err.result?.nInserted || 0;
+    const failedCount = recordsToInsert.length - successfulInserts;
+
+    res.status(400).json({
+      message: `Error durante la inserción del lote. Insertados: ${successfulInserts}. Fallidos: ${failedCount}.`,
+      details: err.writeErrors ? err.writeErrors.map(e => ({ index: e.index, code: e.code, error: e.errmsg })) : err.message,
+    });
   }
 });
 
@@ -161,14 +202,48 @@ router.put('/:id', getDocenteCarga, async (req, res) => {
 });
 
 // DELETE: Eliminar un registro
-router.delete('/:id', getDocenteCarga, async (req, res) => {
-  try {
-    await res.docenteCarga.deleteOne();
-    res.json({ message: 'Registro eliminado exitosamente' });
-  } catch (err) {
-    console.error("Error al eliminar el registro:", err);
-    res.status(500).json({ message: "Error al eliminar el registro: " + err.message });
+// CORRECTO
+// 1. Ruta específica con el texto "bulk"
+router.delete('/bulk', async (req, res) => {
+  const { semestre, fechaCarga } = req.body;
+
+  if (!semestre || !fechaCarga) {
+    return res.status(400).json({
+      message: 'Los campos "semestre" y "fechaCarga" son requeridos.'
+    });
   }
+  
+  try {
+    const filter = {
+      semestre: semestre,
+      fechaProgramacion: fechaCarga
+    };
+
+    const result = await ProgramacionHoraria.deleteMany(filter);
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({
+        message: `No se encontraron registros para eliminar.`,
+        deletedCount: result.deletedCount,
+      });
+    }
+
+    res.status(200).json({
+      message: `Se eliminaron ${result.deletedCount} registros.`,
+      deletedCount: result.deletedCount,
+    });
+
+  } catch (err) {
+    res.status(500).json({ 
+        message: "Error interno del servidor.",
+        error: err.message 
+    });
+  }
+});
+
+// 2. Ruta genérica con un parámetro :id
+router.delete('/:id', getDocenteCarga, async (req, res) => { 
+  // ... tu código para eliminar un solo registro ...
 });
 
 // Middleware para obtener un registro por ID
