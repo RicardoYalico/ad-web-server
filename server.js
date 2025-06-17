@@ -72,7 +72,6 @@ mongoose.connect(process.env.MONGODB_URI)
         model: ReporteUnicoDocente,
         indexes: [
           { name: 'codigoBanner_1', def: { codigoBanner: 1 } },
-          { name: 'dni_1', def: { dni: 1 }, options: { unique: true } }
         ]
       }
     ];
@@ -111,6 +110,10 @@ app.use('/api/sp-da002-limpiar', spDA002LimpiarRouter);
 
 const asignacionesEsaRouter = require('./routes/asignaciones');
 app.use('/api/asignaciones', asignacionesEsaRouter);
+
+const planIntegralDocenteRouter = require('./routes/planIntegralDocente'); // Importar el router de Plan Integral Docente
+app.use('/api/plan-integral-docente', planIntegralDocenteRouter); // Montar el router en la ruta deseada
+
 
 app.get('/', (req, res) => {
   res.send('API de Gestión Educativa funcionando!');

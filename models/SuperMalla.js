@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
 
 const SuperMallaSchema = new mongoose.Schema({
+  semestre: { type: String, trim: true, default: '' },
+  fechaCarga: { type: Date, default: Date.now },
   facultad: { type: String, trim: true, default: '' },
   unidNegocio: { type: String, trim: true, default: '' },
   modaliadDeLaCarrera: { type: String, trim: true, default: '' },

@@ -144,7 +144,7 @@ router.post('/bulk', async (req, res) => {
   }
 
   try {
-    const result = await ReporteUnicoDocente.insertMany(recordsToInsert, { ordered: false, lean: true });
+    const result = await ReporteUnicoDocente.insertMany(recordsToInsert, { ordered: false});
     res.status(201).json({
       message: `Carga masiva completada. ${result.length} reportes fueron insertados exitosamente.`,
       insertedCount: result.length,

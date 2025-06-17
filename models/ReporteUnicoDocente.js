@@ -15,8 +15,7 @@ const ReporteUnicoDocenteSchema = new mongoose.Schema({
   dni: {
     type: String,
     trim: true,
-    unique: true, // El DNI usualmente es único
-    required: [true, "El DNI es requerido"],
+    default: ''
     // Podrías añadir una validación de formato si es necesario
   },
   codigoBanner: {

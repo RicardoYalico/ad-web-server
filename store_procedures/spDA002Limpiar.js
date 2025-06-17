@@ -45,7 +45,7 @@ async function spDA002Limpiar() {
       { $match: { idPrinc: 'Y' } },
       {
         $lookup: {
-          from: 'reporteUnicoDocentes',
+          from: 'reporteunicodocentes',
           localField: 'idDocente',
           foreignField: 'codigoBanner',
           as: 'infoReporteDocenteArr'
@@ -147,6 +147,7 @@ async function spDA002Limpiar() {
       _id: 0
     }).toArray();
 
+
     // --- 3. CREAR UN MAPA PARA BÚSQUEDA RÁPIDA DE ESA ---
     const encuestaMap = new Map();
     for (const encuesta of encuestas) {
@@ -165,6 +166,9 @@ async function spDA002Limpiar() {
       };
     });
 
+    console.log(`Docentes procesados con ESA: ${docentesConEsa.length}`);
+
+
     // --- 5. SELECCIONAR EL MEJOR REGISTRO POR DOCENTE ---
     const docentesFinalesMap = new Map();
     for (const docente of docentesConEsa) {
@@ -182,7 +186,7 @@ async function spDA002Limpiar() {
     const resultadoIntermedio = Array.from(docentesFinalesMap.values());
     
     // --- 6. OBTENER LOS DATOS DEL PLAN INTEGRAL ---
-    const planIntegralCollection = db.collection('planintegral');
+    const planIntegralCollection = db.collection('planintegraldocentes');
     const planesIntegrales = await planIntegralCollection.find({}).toArray();
 
     // --- 7. CREAR UN MAPA PARA BÚSQUEDA RÁPIDA DEL PLAN INTEGRAL (PIDD) ---
