@@ -38,6 +38,20 @@ async function spDA002Limpiar() {
       throw new Error('No se pudo obtener la instancia de la base de datos desde Mongoose.');
     }
 
+    const encuestasCollection = db.collection('encuestaesas');
+
+        const mayusc_esas = await encuestasCollection.updateMany(
+      { codBanner: { $exists: true, $type: 'string' } },
+      [
+        {
+          $set: {
+            codBanner: { $toUpper: "$codBanner" }
+          }
+        }
+      ]
+    );
+
+
     // --- 1. PREPARAR Y OBTENER LOS DOCENTES CON SUS HORARIOS ---
     const docentesCollection = db.collection('programacionhorarias');
     const aggDocentes = [
