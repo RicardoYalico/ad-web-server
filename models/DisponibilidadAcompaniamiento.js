@@ -2,8 +2,8 @@
 const mongoose = require('mongoose');
 
 const DisponibilidadAcompaniamientoSchema = new mongoose.Schema({
-  apellidosNombresCompletos: { type: String, trim: true, required: [true, 'Los apellidos y nombres son requeridos'] },
-  dni: { type: String, trim: true, required: [true, 'El DNI es requerido'] /* index: true */ },
+  apellidosNombresCompletos: { type: String, trim: true},
+  dni: { type: String, trim: true},
   horasDisponiblesParaRealizarAcompaniamientoPresencial: { type: Number, default: 0 },
   horasDisponiblesParaRealizarAcompaniamientoRemoto: { type: Number, default: 0 },
   sede1DePreferenciaPresencial: { type: String, trim: true, default: '' },
@@ -19,10 +19,10 @@ const DisponibilidadAcompaniamientoSchema = new mongoose.Schema({
 
 // Para evitar duplicados exactos de la misma disponibilidad horaria para el mismo DNI y sede/dia/franja
 // Esto es un ejemplo, ajústalo a la unicidad real que necesites.
-DisponibilidadAcompaniamientoSchema.index(
-  { dni: 1, sede1DePreferenciaPresencial: 1, dia: 1, franja: 1, turno: 1 /* , periodoAcademico: 1 */ },
-  { unique: true, message: 'Ya existe una disponibilidad registrada con estos mismos datos para el DNI.' }
-);
+// DisponibilidadAcompaniamientoSchema.index(
+//   { dni: 1, sede1DePreferenciaPresencial: 1, dia: 1, franja: 1, turno: 1 /* , periodoAcademico: 1 */ },
+//   { unique: true, message: 'Ya existe una disponibilidad registrada con estos mismos datos para el DNI.' }
+// );
 
 
 module.exports = mongoose.model('DisponibilidadAcompaniamiento', DisponibilidadAcompaniamientoSchema);

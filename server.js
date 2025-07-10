@@ -39,22 +39,22 @@ mongoose.connect(process.env.MONGODB_URI)
           { name: 'nrc_1', def: { nrc: 1 }, options: { sparse: true } }
         ]
       },
-      {
-        model: DisponibilidadAcompaniamiento,
-        indexes: [
-          {
-            name: 'dni_1_sede1DePreferenciaPresencial_1_dia_1_franja_1_turno_1',
-            def: {
-              dni: 1,
-              sede1DePreferenciaPresencial: 1,
-              dia: 1,
-              franja: 1,
-              turno: 1
-            },
-            options: { unique: true }
-          }
-        ]
-      },
+      // {
+      //   model: DisponibilidadAcompaniamiento,
+      //   indexes: [
+      //     {
+      //       name: 'dni_1_sede1DePreferenciaPresencial_1_dia_1_franja_1_turno_1',
+      //       def: {
+      //         dni: 1,
+      //         sede1DePreferenciaPresencial: 1,
+      //         dia: 1,
+      //         franja: 1,
+      //         turno: 1
+      //       },
+      //       options: { unique: true }
+      //     }
+      //   ]
+      // },
       {
         model: EncuestaEsa,
         indexes: [
@@ -113,6 +113,15 @@ app.use('/api/asignaciones', asignacionesEsaRouter);
 
 const planIntegralDocenteRouter = require('./routes/planIntegralDocente'); // Importar el router de Plan Integral Docente
 app.use('/api/plan-integral-docente', planIntegralDocenteRouter); // Montar el router en la ruta deseada
+
+const asignacionCambiosRouter = require('./routes/asignacionCambios'); // Importar el router de Plan Integral Docente
+app.use('/api/asignacion-cambios', asignacionCambiosRouter); // Montar el router en la ruta deseada
+
+const asignacionEspecialistaDocentesRouter = require('./routes/asignacionEspecialistaDocentes'); // Importar el router de Asignación Especialista Docente
+app.use('/api/asignacion-especialista-docentes', asignacionEspecialistaDocentesRouter);
+
+const historialRoutes = require('./routes/historialAsignaciones');
+app.use('/api/historial-asignaciones', historialRoutes); // o la ruta base que prefieras
 
 
 app.get('/', (req, res) => {

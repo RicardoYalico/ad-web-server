@@ -14,4 +14,5 @@ const AsignacionesEsaSchema = new mongoose.Schema({
   timestamps: true,
 });
 
-module.exports = mongoose.model('asignaciones', AsignacionesEsaSchema);
+module.exports = mongoose.models.asignaciones || mongoose.model('asignaciones', AsignacionesEsaSchema);
+

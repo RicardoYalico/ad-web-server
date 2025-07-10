@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const ProgramacionHorariaSchema = new mongoose.Schema({
   // _id es generado automáticamente por MongoDB
   semestre: { type: String, trim: true, default: '' },
-  fechaProgramacion: { type: String, trim: true, default: '' },
+  fechaCarga: { type: String, trim: true, default: '' },
   periodo: { type: String, trim: true, default: '' },
   campus: { type: String, trim: true, default: '' },
   facultad: { type: String, trim: true, default: '' },

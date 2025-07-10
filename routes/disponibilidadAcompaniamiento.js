@@ -23,43 +23,34 @@ async function getDisponibilidad(req, res, next) {
   next();
 }
 
-// GET: Obtener todos los registros de disponibilidad con paginación
+// GET: Obtener todos los registros, con opción de filtrar por DNI de especialista
 router.get('/', async (req, res) => {
   try {
-    const { page = 1, limit = 100, dni, sede, dia, turno } = req.query;
+    const { dni, sede, dia, turno, dniEspecialista } = req.query;
     const query = {};
 
-    if (dni) query.dni = { $regex: dni, $options: "i" }; // Búsqueda insensible a mayúsculas/minúsculas
+    // Si se provee 'dniEspecialista', se usa para una búsqueda exacta y prioritaria.
+    if (dniEspecialista) {
+      query.dni = dniEspecialista; // Búsqueda exacta
+    } else if (dni) {
+      // Si no, se usa 'dni' para una búsqueda parcial (como antes).
+      query.dni = { $regex: dni, $options: "i" };
+    }
+
+    // Resto de los filtros
     if (sede) query.sede1DePreferenciaPresencial = { $regex: sede, $options: "i" };
     if (dia) query.dia = { $regex: dia, $options: "i" };
     if (turno) query.turno = { $regex: turno, $options: "i" };
-    // Agrega otros filtros si son necesarios, ej: periodoAcademico
 
     const selectFields = req.query.fields ? req.query.fields.split(',').join(' ') : '';
-
-    const options = {
-      page: parseInt(page, 10),
-      limit: parseInt(limit, 10),
-      lean: true,
-      sort: { apellidosNombresCompletos: 1, dia: 1, franja: 1 } // Ejemplo de ordenamiento
-    };
+    const sortOptions = { apellidosNombresCompletos: 1, dia: 1, franja: 1 };
 
     const disponibilidades = await DisponibilidadAcompaniamiento.find(query)
       .select(selectFields)
-      .limit(options.limit)
-      .skip((options.page - 1) * options.limit)
-      .sort(options.sort)
+      .sort(sortOptions)
       .lean();
 
-    const totalDocs = await DisponibilidadAcompaniamiento.countDocuments(query);
-
-    res.json({
-      data: disponibilidades,
-      totalPages: Math.ceil(totalDocs / options.limit),
-      currentPage: options.page,
-      totalDocs: totalDocs,
-      limit: options.limit
-    });
+    res.json(disponibilidades);
 
   } catch (err) {
     console.error("Error al obtener las disponibilidades:", err);
@@ -87,7 +78,7 @@ router.post('/', async (req, res) => {
       });
       return res.status(400).json({ message: "Error de validación al crear la disponibilidad", errors });
     }
-    if (err.code === 11000) { // Error de clave duplicada (por el index unique)
+    if (err.code === 11000) {
       return res.status(400).json({
         message: "Error: Ya existe un registro de disponibilidad con estos mismos datos (DNI, sede, día, franja, turno).",
         details: err.keyValue
@@ -99,7 +90,6 @@ router.post('/', async (req, res) => {
 });
 
 // POST: Crear múltiples registros de disponibilidad (carga masiva)
-// Path: /api/disponibilidad-acompaniamiento/bulk (o el que prefieras)
 router.post('/bulk', async (req, res) => {
   const recordsToInsert = req.body;
 
@@ -118,13 +108,12 @@ router.post('/bulk', async (req, res) => {
     if (err.name === 'MongoBulkWriteError' || err.code === 11000) {
       const errorDetails = err.writeErrors
         ? err.writeErrors.map(e => ({
-            index: e.index, // El índice en el array original `recordsToInsert`
+            index: e.index,
             code: e.code,
             message: e.errmsg,
-            // `e.err.op` contiene el documento que falló
             failedDocumentPreview: e.err.op ? { dni: e.err.op.dni, dia: e.err.op.dia, franja: e.err.op.franja } : "No disponible"
           }))
-        : { generalMessage: err.message, code: err.code }; // Error general si no hay `writeErrors`
+        : { generalMessage: err.message, code: err.code };
       return res.status(400).json({
         message: "Error durante la carga masiva de disponibilidad. Algunos registros podrían no haberse insertado (posiblemente duplicados).",
         details: errorDetails
@@ -133,6 +122,44 @@ router.post('/bulk', async (req, res) => {
     res.status(500).json({ message: "Error interno del servidor durante la carga masiva: " + err.message });
   }
 });
+
+// --- RUTA DE MIGRACIÓN DE DATOS (USO ÚNICO) ---
+// PATCH: /dni-to-string
+// Convierte permanentemente todos los campos 'dni' de tipo numérico a string.
+// ATENCIÓN: Llamar a esta ruta UNA SOLA VEZ para corregir los datos en la BD.
+router.patch('/dni-to-string', async (req, res) => {
+    try {
+      // Busca todos los documentos donde 'dni' sea de tipo numérico (int, long, double, etc.)
+      const docsToUpdate = await DisponibilidadAcompaniamiento.find({ 
+        dni: { $type: ["int", "long", "double", "decimal"] } 
+      });
+  
+      if (docsToUpdate.length === 0) {
+        return res.status(200).json({ message: "No se encontraron DNIs para actualizar. Todos parecen ser strings ya." });
+      }
+  
+      // Crea un array de operaciones de actualización para ejecutarlas en lote
+      const bulkOps = docsToUpdate.map(doc => ({
+        updateOne: {
+          filter: { _id: doc._id },
+          update: { $set: { dni: String(doc.dni) } }
+        }
+      }));
+  
+      // Ejecuta la operación masiva
+      const result = await DisponibilidadAcompaniamiento.bulkWrite(bulkOps);
+  
+      res.status(200).json({
+        message: "Migración de DNI a string completada exitosamente.",
+        documentosModificados: result.modifiedCount
+      });
+  
+    } catch (err) {
+      console.error("Error durante la migración de DNI a string:", err);
+      res.status(500).json({ message: "Error interno del servidor durante la migración: " + err.message });
+    }
+  });
+
 
 // PUT: Actualizar un registro de disponibilidad existente
 router.put('/:id', getDisponibilidad, async (req, res) => {
