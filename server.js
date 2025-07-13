@@ -123,6 +123,8 @@ app.use('/api/asignacion-especialista-docentes', asignacionEspecialistaDocentesR
 const historialRoutes = require('./routes/historialAsignaciones');
 app.use('/api/historial-asignaciones', historialRoutes); // o la ruta base que prefieras
 
+const notificaciones = require('./routes/notificaciones');
+app.use('/api/notificaciones', notificaciones);
 
 app.get('/', (req, res) => {
   res.send('API de Gestión Educativa funcionando!');

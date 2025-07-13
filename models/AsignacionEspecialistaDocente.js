@@ -81,9 +81,9 @@ const AsignacionEspecialistaDocenteSchema = new Schema({
   // --- METADATOS DE LA EJECUCIÓN ---
   estadoGeneral: {
     type: String,
+    required: false,
     // CAMBIO: Se añade 'Sin Asignar' para que sea un valor válido.
-    enum: ['Planificado', 'En Progreso', 'Completado', 'Cancelado', 'Sin Asignar'],
-    default: 'Sin Asignar'
+    // enum: ['Planificado', 'En Progreso', 'Completado', 'Cancelado', 'Sin Asignar'],
   },
   // Campo clave para el versionado
   fechaHoraEjecucion: {

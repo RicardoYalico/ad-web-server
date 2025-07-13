@@ -8,7 +8,6 @@ const { Schema } = mongoose;
  */
 const HistorialAsignacionSchema = new Schema({
     // --- Datos de la Asignación (Snapshot en el momento del cambio) ---
-    // Estos campos son una copia de la asignación generada.
     semestre: { 
         type: String, 
         required: true, 
@@ -28,35 +27,31 @@ const HistorialAsignacionSchema = new Schema({
     especialistaDni: { 
         type: String, 
         index: true, 
-        default: null // Será null si el docente queda sin asignar.
+        default: null // Será null si el docente queda sin asignar o es eliminado.
     },
     nombreEspecialista: { 
         type: String, 
         default: null 
     },
     cursos: { 
-        type: Array 
+        type: Array,
+        default: [] // Será array vacío para docentes eliminados
     },
-    estadoGeneral: { 
-        type: String, 
-        required: true // Por ej: 'Planificado', 'Sin Asignar'
+    pidd: {
+        type: Object,
+        required: false
     },
-    // --- CURSOS CON HORARIOS ENRIQUECIDOS ---
-  pidd: {
-        type: Object, // o mongoose.Schema.Types.Mixed
-        required: false // O true, dependiendo de tus reglas de negocio
-    },
-    // --- Metadatos del Cambio ---
-    // Este campo es el corazón del historial, describe qué pasó.
+    
+    // --- Metadatos del Cambio (ÚNICO ESTADO) ---
     estadoCambio: {
         type: String,
         required: true,
         enum: [
-            'ASIGNACION_NUEVA',   // Docente no tenía especialista y ahora sí.
-            'REASIGNADO',         // Docente tenía un especialista y se le asignó uno diferente.
-            'MANTENIDO',          // Docente conserva el mismo especialista que en la ejecución anterior.
-            'DESASIGNADO',        // Docente tenía especialista y ahora no tiene (estado 'Sin Asignar').
-            'PERMANECE_SIN_ASIGNAR' // Docente no tenía especialista y sigue sin tener.
+            'ASIGNACION_NUEVA',         // Docente no tenía especialista y ahora sí.
+            'REASIGNADO',              // Docente tenía un especialista y se le asignó uno diferente.
+            'MANTENIDO',               // Docente conserva el mismo especialista que en la ejecución anterior.
+            'DESASIGNADO',             // Docente tenía especialista y ahora no tiene (o fue eliminado).
+            'PERMANECE_SIN_ASIGNAR'    // Docente no tenía especialista y sigue sin tener.
         ],
         index: true
     },
@@ -69,14 +64,13 @@ const HistorialAsignacionSchema = new Schema({
     },
     
     // --- Datos de Auditoría ---
-    // Guarda la información del especialista previo para facilitar comparaciones y análisis.
     detalleAnterior: {
         especialistaDni: { type: String },
         nombreEspecialista: { type: String }
     }
 }, {
-    timestamps: true, // Agrega los campos createdAt y updatedAt automáticamente.
-    collection: 'historial_asignaciones_especialistas' // Nombre explícito de la colección en MongoDB.
+    timestamps: true,
+    collection: 'historial_asignaciones_especialistas'
 });
 
 // Middleware para asegurar que detalleAnterior no sea null
@@ -87,5 +81,13 @@ HistorialAsignacionSchema.pre('save', function(next) {
     next();
 });
 
+// Método virtual para calcular el estado general cuando se necesite
+HistorialAsignacionSchema.virtual('estadoGeneral').get(function() {
+    return this.especialistaDni ? 'Planificado' : 'Sin Asignar';
+});
+
+// Asegurar que los virtuales se incluyan en JSON
+HistorialAsignacionSchema.set('toJSON', { virtuals: true });
+HistorialAsignacionSchema.set('toObject', { virtuals: true });
 
 module.exports = mongoose.model('HistorialAsignacion', HistorialAsignacionSchema);
