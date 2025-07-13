@@ -491,6 +491,8 @@ router.post('/', async (req, res) => {
     }
 });
 
+
+
 // El resto de los endpoints como /especialista/:dni y /asignacion-automatica
 // deberían seguir funcionando ya que leen de AsignacionEspecialistaDocente,
 // cuya estructura de salida no ha cambiado. Los dejo omitidos por brevedad
