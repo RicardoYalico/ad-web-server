@@ -13,6 +13,7 @@ const AcompanamientoInfoSchema = new Schema({
     enum: ['Planificado', 'Confirmado', 'Realizado', 'Cancelado'], 
     default: 'Planificado' 
   },
+  tipo: { type: String, trim: true }, 
   disponibilidadEspecialista: { type: Object } 
 }, { _id: false });
 

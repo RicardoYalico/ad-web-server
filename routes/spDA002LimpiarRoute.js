@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 // Asegúrate de que la ruta al módulo sea la correcta en tu proyecto
-const { spDA002Limpiar } = require('../store_procedures/spDA002Limpiar');
+const { spDA004NormalizarAsignaciones } = require('../store_procedures/spDA002Limpiar');
 
 /**
  * @swagger
@@ -83,7 +83,7 @@ router.post('/', async (req, res) => {
     console.log(`Recibida solicitud POST para procesar el semestre: ${semestre}`);
     
     // Pasar el semestre a tu store procedure.
-    const result = await spDA002Limpiar(semestre);
+    const result = await spDA004NormalizarAsignaciones(semestre);
 
     res.json({
       message: 'Proceso ejecutado correctamente.',
