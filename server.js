@@ -1,33 +1,36 @@
-// server.js
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-
 const app = express();
 const port = process.env.PORT || 3001;
 
 // Middlewares
 app.use(cors());
-app.use(express.json({ limit: '250mb' })); // For handling large JSON payloads in bulk operations
+app.use(express.json({ limit: '250mb' }));
 app.use(express.urlencoded({ limit: '250mb', extended: true }));
 
 // Conexión a MongoDB
 mongoose.connect(process.env.MONGODB_URI)
   .then(async () => {
     console.log(`Conectado a MongoDB en: ${process.env.MONGODB_URI}`);
-
+    
     const ensureIndexes = require('./utils/initIndexes');
-
-    // Importa los modelos
+    
+    // Importar modelos
     const ProgramacionHoraria = require('./models/ProgramacionHoraria');
     const DisponibilidadAcompaniamiento = require('./models/DisponibilidadAcompaniamiento');
     const EncuestaEsa = require('./models/EncuestaEsa');
     const ReporteUnicoDocente = require('./models/ReporteUnicoDocente');
-    // Agrega más modelos aquí
-
-    // Configura los índices que quieres garantizar
+    const DocentePerfil = require('./models/ProgramacionHoraria/DocentePerfil');
+    const DocenteCurso = require('./models/ProgramacionHoraria/DocenteCurso');
+    const CursoHorario = require('./models/ProgramacionHoraria/CursoHorario');
+    const AsignacionEspecialistaDocente = require('./models/AsignacionEspecialistaDocente');
+    const HistorialAsignacion = require('./models/HistorialAsignacion');
+    
+    // ✅ CONFIGURACIÓN COMPLETA DE ÍNDICES OPTIMIZADOS
     const indexConfigs = [
+      // Índices existentes
       {
         model: ProgramacionHoraria,
         indexes: [
@@ -39,71 +42,170 @@ mongoose.connect(process.env.MONGODB_URI)
           { name: 'nrc_1', def: { nrc: 1 }, options: { sparse: true } }
         ]
       },
-      // {
-      //   model: DisponibilidadAcompaniamiento,
-      //   indexes: [
-      //     {
-      //       name: 'dni_1_sede1DePreferenciaPresencial_1_dia_1_franja_1_turno_1',
-      //       def: {
-      //         dni: 1,
-      //         sede1DePreferenciaPresencial: 1,
-      //         dia: 1,
-      //         franja: 1,
-      //         turno: 1
-      //       },
-      //       options: { unique: true }
-      //     }
-      //   ]
-      // },
       {
         model: EncuestaEsa,
         indexes: [
           {
             name: 'codBanner_1_programa_1_modalidad_1',
-            def: {
-              codBanner: 1,
-              programa: 1,
-              modalidad: 1
-            }
+            def: { codBanner: 1, programa: 1, modalidad: 1 }
           }
         ]
       },
       {
         model: ReporteUnicoDocente,
         indexes: [
-          { name: 'codigoBanner_1', def: { codigoBanner: 1 } },
+          { name: 'codigoBanner_1', def: { codigoBanner: 1 } }
+        ]
+      },
+      
+      // ✅ NUEVOS ÍNDICES OPTIMIZADOS PARA MATCH
+      {
+        model: DocentePerfil,
+        indexes: [
+          { 
+            name: 'semestre_1_fechaHoraEjecucion_-1', 
+            def: { semestre: 1, fechaHoraEjecucion: -1 } 
+          },
+          { 
+            name: 'idDocente_1_semestre_1', 
+            def: { idDocente: 1, semestre: 1 } 
+          },
+          { 
+            name: 'programa_1_modalidad_1_semestre_1', 
+            def: { programa: 1, modalidad: 1, semestre: 1 } 
+          },
+          {
+            name: 'promedioEsa_-1_semestre_1',
+            def: { promedioEsa: -1, semestre: 1 }
+          }
+        ]
+      },
+      {
+        model: DocenteCurso,
+        indexes: [
+          { 
+            name: 'semestre_1_fechaHoraEjecucion_-1', 
+            def: { semestre: 1, fechaHoraEjecucion: -1 } 
+          },
+          { 
+            name: 'idDocente_1_semestre_1', 
+            def: { idDocente: 1, semestre: 1 } 
+          },
+          { 
+            name: 'seccion_1_semestre_1', 
+            def: { seccion: 1, semestre: 1 } 
+          },
+          { 
+            name: 'codCurso_1_idDocente_1_semestre_1', 
+            def: { codCurso: 1, idDocente: 1, semestre: 1 } 
+          },
+          {
+            name: 'programa_1_modalidad_1_semestre_1',
+            def: { programa: 1, modalidad: 1, semestre: 1 }
+          }
+        ]
+      },
+      {
+        model: CursoHorario,
+        indexes: [
+          { 
+            name: 'semestre_1_fechaHoraEjecucion_-1', 
+            def: { semestre: 1, fechaHoraEjecucion: -1 } 
+          },
+          { 
+            name: 'seccion_1_semestre_1', 
+            def: { seccion: 1, semestre: 1 } 
+          },
+          {
+            name: 'dia_1_campus_1',
+            def: { dia: 1, campus: 1 }
+          }
+        ]
+      },
+      {
+        model: DisponibilidadAcompaniamiento,
+        indexes: [
+          { 
+            name: 'dni_1', 
+            def: { dni: 1 } 
+          },
+          { 
+            name: 'dia_1_sede1DePreferenciaPresencial_1_franja_1', 
+            def: { dia: 1, sede1DePreferenciaPresencial: 1, franja: 1 } 
+          },
+          { 
+            name: 'sede1DePreferenciaPresencial_1', 
+            def: { sede1DePreferenciaPresencial: 1 } 
+          }
+        ]
+      },
+      {
+        model: AsignacionEspecialistaDocente,
+        indexes: [
+          { 
+            name: 'semestre_1', 
+            def: { semestre: 1 } 
+          },
+          { 
+            name: 'idDocente_1_semestre_1', 
+            def: { idDocente: 1, semestre: 1 } 
+          },
+          { 
+            name: 'especialistaDni_1_semestre_1', 
+            def: { especialistaDni: 1, semestre: 1 } 
+          },
+          {
+            name: 'especialistaDni_1_fechaHoraEjecucion_-1',
+            def: { especialistaDni: 1, fechaHoraEjecucion: -1 }
+          }
+        ]
+      },
+      {
+        model: HistorialAsignacion,
+        indexes: [
+          { 
+            name: 'semestre_1_fechaHoraEjecucion_-1', 
+            def: { semestre: 1, fechaHoraEjecucion: -1 } 
+          },
+          { 
+            name: 'especialistaDni_1_fechaHoraEjecucion_-1', 
+            def: { especialistaDni: 1, fechaHoraEjecucion: -1 } 
+          },
+          { 
+            name: 'estadoCambio_1_fechaHoraEjecucion_-1', 
+            def: { estadoCambio: 1, fechaHoraEjecucion: -1 } 
+          },
+          {
+            name: 'idDocente_1_semestre_1',
+            def: { idDocente: 1, semestre: 1 }
+          }
         ]
       }
     ];
-    // Corre el inicializador
+    
+    // Ejecutar creación de índices
     await ensureIndexes(indexConfigs);
-
   })
   .catch(err => console.error('No se pudo conectar a MongoDB...', err));
 
-// Rutas
+// Rutas (mantener las existentes)
 const programacionHorariaRouter = require('./routes/programacionHoraria');
 app.use('/api/programacion-horaria', programacionHorariaRouter);
 
-// NUEVA RUTA PARA ENCUESTAS ESA
-const encuestasEsaRouter = require('./routes/encuestasEsa'); // Importar el nuevo router
-app.use('/api/esa', encuestasEsaRouter); // Montar el router en /api/esa
+const encuestasEsaRouter = require('./routes/encuestasEsa');
+app.use('/api/esa', encuestasEsaRouter);
 
-// NUEVA RUTA PARA DISPONIBILIDAD DE ACOMPAÑAMIENTO
-const disponibilidadAcompaniamientoRouter = require('./routes/disponibilidadAcompaniamiento'); // Importar
-app.use('/api/disponibilidad-acompaniamiento', disponibilidadAcompaniamientoRouter); // Montar en la ruta deseada
+const disponibilidadAcompaniamientoRouter = require('./routes/disponibilidadAcompaniamiento');
+app.use('/api/disponibilidad-acompaniamiento', disponibilidadAcompaniamientoRouter);
 
-// NUEVA RUTA PARA RUBRICAS
-const rubricas = require('./routes/rubricas'); // Importar
-app.use('/api/rubricas', rubricas); // Montar en la ruta deseada
+const rubricas = require('./routes/rubricas');
+app.use('/api/rubricas', rubricas);
 
-// NUEVA RUTA PARA RUBRICAS
-const reporteUnicoDocente = require('./routes/reporteUnicoDocente'); // Importar
-app.use('/api/reporte-unico-docente', reporteUnicoDocente); // Montar en la ruta deseada
+const reporteUnicoDocente = require('./routes/reporteUnicoDocente');
+app.use('/api/reporte-unico-docente', reporteUnicoDocente);
 
-// NUEVA RUTA PARA RUBRICAS
-const superMalla = require('./routes/superMalla'); // Importar
-app.use('/api/super-malla', superMalla); // Montar en la ruta deseada
+const superMalla = require('./routes/superMalla');
+app.use('/api/super-malla', superMalla);
 
 const spDA002LimpiarRouter = require('./routes/spDA002LimpiarRoute');
 app.use('/api/sp-da002-limpiar', spDA002LimpiarRouter);
@@ -111,17 +213,17 @@ app.use('/api/sp-da002-limpiar', spDA002LimpiarRouter);
 const asignacionesEsaRouter = require('./routes/asignaciones');
 app.use('/api/asignaciones', asignacionesEsaRouter);
 
-const planIntegralDocenteRouter = require('./routes/planIntegralDocente'); // Importar el router de Plan Integral Docente
-app.use('/api/plan-integral-docente', planIntegralDocenteRouter); // Montar el router en la ruta deseada
+const planIntegralDocenteRouter = require('./routes/planIntegralDocente');
+app.use('/api/plan-integral-docente', planIntegralDocenteRouter);
 
-const asignacionCambiosRouter = require('./routes/asignacionCambios'); // Importar el router de Plan Integral Docente
-app.use('/api/asignacion-cambios', asignacionCambiosRouter); // Montar el router en la ruta deseada
+const asignacionCambiosRouter = require('./routes/asignacionCambios');
+app.use('/api/asignacion-cambios', asignacionCambiosRouter);
 
-const asignacionEspecialistaDocentesRouter = require('./routes/asignacionEspecialistaDocentes'); // Importar el router de Asignación Especialista Docente
+const asignacionEspecialistaDocentesRouter = require('./routes/asignacionEspecialistaDocentes');
 app.use('/api/asignacion-especialista-docentes', asignacionEspecialistaDocentesRouter);
 
 const historialRoutes = require('./routes/historialAsignaciones');
-app.use('/api/historial-asignaciones', historialRoutes); // o la ruta base que prefieras
+app.use('/api/historial-asignaciones', historialRoutes);
 
 const notificaciones = require('./routes/notificaciones');
 app.use('/api/notificaciones', notificaciones);

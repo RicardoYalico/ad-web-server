@@ -1,84 +1,278 @@
+// ===============================
+// 3. ARCHIVO COMPLETO OPTIMIZADO: routes/asignacionEspecialistaDocentes.js
+// ===============================
+
 const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 
 // --- MODELOS ---
-// Se importan todos los modelos desde la carpeta /models
-// Esto asegura que cada modelo se compila una sola vez.
-
-
-// Agregar al inicio del archivo, junto con los otros requires
-const { generarNotificacionesParaEspecialistas } = require('../utils/notificaciones'); // Ajusta la ruta según tu estructura
-
-
-// Modelos de Salida
+const { generarNotificacionesParaEspecialistas } = require('../utils/notificaciones');
 const AsignacionEspecialistaDocente = require('../models/AsignacionEspecialistaDocente');
 const HistorialAsignacion = require('../models/HistorialAsignacion');
-
-// Modelos de Entrada
 const DisponibilidadAcompaniamiento = require('../models/DisponibilidadAcompaniamiento');
 const DocentePerfil = require('../models/ProgramacionHoraria/DocentePerfil');
 const DocenteCurso = require('../models/ProgramacionHoraria/DocenteCurso');
 const CursoHorario = require('../models/ProgramacionHoraria/CursoHorario');
 
+// ===== FUNCIONES AUXILIARES OPTIMIZADAS =====
 
-/**
- * Procesa el match entre los docentes y la disponibilidad de especialistas,
- * asegurando un único especialista por docente y marcando los horarios.
- * @param {string} semestre - El semestre a procesar.
- * @returns {Promise<object>} El resultado del proceso de match.
- */
-async function procesarMatch(semestre) {
-    console.log(`Iniciando match para el semestre: ${semestre} con lógica de asignación por docente.`);
-    const fechaHoraEjecucion = new Date();
-
-    // 1. Obtener la fecha de la última ejecución de los datos de origen (perfiles).
-    const ultimaEjecucionOrigen = await DocentePerfil.findOne({ semestre: semestre })
-        .sort({ fechaHoraEjecucion: -1 })
-        .select('fechaHoraEjecucion')
-        .lean();
-
-    if (!ultimaEjecucionOrigen) {
-        throw new Error(`No se encontraron perfiles de origen para el semestre ${semestre}. Ejecute primero el script de normalización.`);
+function convertirHoraAMinutos(horaString) {
+    if (!horaString) return null;
+    
+    let hora = horaString.trim().replace(/[^0-9]/g, '');
+    
+    if (hora.length === 4) {
+        const horas = parseInt(hora.substring(0, 2));
+        const minutos = parseInt(hora.substring(2, 4));
+        return horas * 60 + minutos;
     }
-
-    const fechaMasReciente = ultimaEjecucionOrigen.fechaHoraEjecucion;
-    console.log(`Se usará la data de perfiles, cursos y horarios de la fecha: ${fechaMasReciente}`);
-
-    // 2. Obtener todos los datos necesarios en paralelo.
-    const [
-        perfilesDocentes,
-        cursosDocentes,
-        horariosCursos,
-        especialistasDisponibles,
-        asignacionesAnteriores
-    ] = await Promise.all([
-        DocentePerfil.find({ semestre: semestre, fechaHoraEjecucion: fechaMasReciente }).lean(),
-        DocenteCurso.find({ semestre: semestre, fechaHoraEjecucion: fechaMasReciente }).lean(),
-        CursoHorario.find({ semestre: semestre, fechaHoraEjecucion: fechaMasReciente }).lean(),
-        DisponibilidadAcompaniamiento.find({}).lean(),
-        AsignacionEspecialistaDocente.find({ semestre: semestre }).sort({ fechaHoraEjecucion: -1 }).lean()
-    ]);
-
-    if (perfilesDocentes.length === 0) {
-        return { message: 'No se encontraron perfiles de docentes para procesar.', matches: 0, sinMatch: 0 };
+    
+    if (hora.length === 3) {
+        const horas = parseInt(hora.substring(0, 1));
+        const minutos = parseInt(hora.substring(1, 3));
+        return horas * 60 + minutos;
     }
+    
+    if (hora.length <= 2) {
+        const horas = parseInt(hora);
+        return horas * 60;
+    }
+    
+    return null;
+}
 
-    console.log(`Perfiles a procesar: ${perfilesDocentes.length}, Especialistas disponibles: ${especialistasDisponibles.length}`);
+function extraerRangoHorario(horarioString) {
+    if (!horarioString) return [null, null];
+    
+    const partes = horarioString.split(' - ');
+    
+    if (partes.length === 2) {
+        const inicio = convertirHoraAMinutos(partes[0].trim());
+        const fin = convertirHoraAMinutos(partes[1].trim());
+        return [inicio, fin];
+    }
+    
+    const horaInicio = convertirHoraAMinutos(horarioString);
+    if (horaInicio !== null) {
+        return [horaInicio, horaInicio + 90];
+    }
+    
+    return [null, null];
+}
 
-    // 3. Crear mapas para búsquedas eficientes y balanceo de carga.
+function cursoEstaEnDisponibilidad(horarioCurso, disponibilidadEspecialista) {
+    if (horarioCurso.dia !== disponibilidadEspecialista.dia) {
+        return false;
+    }
+    
+    if (horarioCurso.campus && disponibilidadEspecialista.sede1DePreferenciaPresencial) {
+        if (horarioCurso.campus !== disponibilidadEspecialista.sede1DePreferenciaPresencial) {
+            return false;
+        }
+    }
+    
+    const [horaInicioCurso, horaFinCurso] = extraerRangoHorario(horarioCurso.hora);
+    const [horaInicioDisp, horaFinDisp] = extraerRangoHorario(disponibilidadEspecialista.franja);
+    
+    if (horaInicioCurso === null || horaFinCurso === null || horaInicioDisp === null || horaFinDisp === null) {
+        return false;
+    }
+    
+    return horaInicioCurso >= horaInicioDisp && horaFinCurso <= horaFinDisp;
+}
+
+// ✅ FUNCIÓN OPTIMIZADA: Verificación de disponibilidad
+function puedeEspecialistaAcompañarDocenteOptimizado(especialistaDni, horariosParaBuscar, disponibilidadPorEspecialista) {
+    const disponibilidadesEspecialista = disponibilidadPorEspecialista.get(especialistaDni);
+    
+    if (!disponibilidadesEspecialista || disponibilidadesEspecialista.length === 0) {
+        return false;
+    }
+    
+    // Crear mapa de disponibilidades para acceso rápido O(1)
     const disponibilidadMap = new Map();
-    const disponibilidadSinSedeMap = new Map();
-    const especialistasREM = new Map();
-    const especialistasVIR = new Map();
-    const cargaEspecialistas = new Map();
+    for (const disp of disponibilidadesEspecialista) {
+        const key = `${disp.dia}-${disp.sede1DePreferenciaPresencial}`;
+        if (!disponibilidadMap.has(key)) {
+            disponibilidadMap.set(key, []);
+        }
+        disponibilidadMap.get(key).push(disp);
+    }
+    
+    // Verificar si puede cubrir al menos un horario
+    for (const horario of horariosParaBuscar) {
+        const key = `${horario.dia}-${horario.campus}`;
+        const disponibilidadesParaEsteHorario = disponibilidadMap.get(key);
+        
+        if (disponibilidadesParaEsteHorario) {
+            for (const disp of disponibilidadesParaEsteHorario) {
+                if (cursoEstaEnDisponibilidad(horario, disp)) {
+                    return true;
+                }
+            }
+        }
+    }
+    
+    return false;
+}
 
-    // Inicializar listas y mapas de carga
-    for (const especialista of especialistasDisponibles) {
-        const dniAsString = String(especialista.dni).trim();
-        if (!cargaEspecialistas.has(dniAsString)) {
-            cargaEspecialistas.set(dniAsString, 0);
-            const especialistaInfo = { dni: dniAsString, nombre: especialista.apellidosNombresCompletos };
+// ===== FUNCIÓN PRINCIPAL COMPLETAMENTE OPTIMIZADA =====
+
+async function procesarMatchOptimizado(semestre) {
+    console.log(`🚀 Iniciando match OPTIMIZADO para el semestre: ${semestre}`);
+    const tiempoInicio = Date.now();
+    const fechaHoraEjecucion = new Date();
+    
+    try {
+        // 1. CAPTURAR ESTADO ACTUAL CON PROYECCIÓN MÍNIMA
+        console.log('📊 Capturando estado actual...');
+        const asignacionesActualesAntesDelMatch = await AsignacionEspecialistaDocente
+            .find(
+                { semestre }, 
+                { 
+                    idDocente: 1, 
+                    especialistaDni: 1, 
+                    nombreEspecialista: 1, 
+                    docente: 1, 
+                    codigoDocente: 1, 
+                    pidd: 1 
+                }
+            )
+            .lean();
+        
+        console.log(`✅ ${asignacionesActualesAntesDelMatch.length} asignaciones actuales encontradas`);
+        
+        // 2. OBTENER FECHA MÁS RECIENTE DE FORMA OPTIMIZADA
+        const ultimaEjecucionOrigen = await DocentePerfil.findOne(
+            { semestre: semestre },
+            { fechaHoraEjecucion: 1 }
+        )
+        .sort({ fechaHoraEjecucion: -1 })
+        .lean();
+        
+        if (!ultimaEjecucionOrigen) {
+            throw new Error(`No se encontraron perfiles de origen para el semestre ${semestre}.`);
+        }
+        
+        const fechaMasReciente = ultimaEjecucionOrigen.fechaHoraEjecucion;
+        console.log(`📅 Usando data de fecha: ${fechaMasReciente}`);
+        
+        // 3. CARGA PARALELA DE DATOS CON PROYECCIÓN ESPECÍFICA
+        console.log('🔄 Cargando datos en paralelo...');
+        const [
+            perfilesDocentes,
+            cursosDocentes,
+            horariosCursos,
+            especialistasDisponibles
+        ] = await Promise.all([
+            DocentePerfil.find(
+                { semestre: semestre, fechaHoraEjecucion: fechaMasReciente },
+                { 
+                    idDocente: 1, 
+                    docente: 1, 
+                    codigoDocente: 1,
+                    programa: 1, 
+                    modalidad: 1, 
+                    promedioEsa: 1, 
+                    pidd: 1,
+                    RolColaborador: 1
+                }
+            ).lean(),
+            
+            DocenteCurso.find(
+                { semestre: semestre, fechaHoraEjecucion: fechaMasReciente },
+                { 
+                    seccion: 1, 
+                    idDocente: 1, 
+                    nombreCurso: 1, 
+                    codCurso: 1, 
+                    programa: 1, 
+                    modalidad: 1,
+                    nrc: 1,
+                    periodo: 1,
+                    metEdu: 1
+                }
+            ).lean(),
+            
+            CursoHorario.find(
+                { semestre: semestre, fechaHoraEjecucion: fechaMasReciente },
+                { 
+                    seccion: 1, 
+                    dia: 1, 
+                    hora: 1, 
+                    campus: 1,
+                    turno: 1,
+                    edificio: 1,
+                    aula: 1,
+                    fechaInicio: 1,
+                    fechaFin: 1
+                }
+            ).lean(),
+            
+            DisponibilidadAcompaniamiento.find(
+                {},
+                { 
+                    dni: 1, 
+                    apellidosNombresCompletos: 1, 
+                    dia: 1, 
+                    franja: 1, 
+                    sede1DePreferenciaPresencial: 1,
+                    horasDisponiblesParaRealizarAcompaniamientoPresencial: 1,
+                    horasDisponiblesParaRealizarAcompaniamientoRemoto: 1
+                }
+            ).lean()
+        ]);
+        
+        if (perfilesDocentes.length === 0) {
+            return { 
+                message: 'No se encontraron perfiles de docentes para procesar.', 
+                matches: 0, 
+                sinMatch: 0,
+                tiempoEjecucion: Date.now() - tiempoInicio
+            };
+        }
+        
+        console.log(`📈 Datos cargados: ${perfilesDocentes.length} perfiles, ${cursosDocentes.length} cursos, ${horariosCursos.length} horarios, ${especialistasDisponibles.length} especialistas`);
+        
+        // 4. CREAR MAPAS OPTIMIZADOS DE UNA SOLA VEZ
+        console.log('🗺️ Creando mapas optimizados...');
+        
+        // Mapa de asignaciones previas
+        const mapaAsignacionPrevia = new Map(
+            asignacionesActualesAntesDelMatch.map(a => [
+                a.idDocente, 
+                {
+                    dni: a.especialistaDni,
+                    nombre: a.nombreEspecialista,
+                    tieneAsignacion: !!a.especialistaDni,
+                    docente: a.docente,
+                    codigoDocente: a.codigoDocente,
+                    pidd: a.pidd
+                }
+            ])
+        );
+        
+        // Mapas de disponibilidad optimizados
+        const disponibilidadPorEspecialista = new Map();
+        const especialistasREM = new Map();
+        const especialistasVIR = new Map();
+        const cargaEspecialistas = new Map();
+        
+        for (const especialista of especialistasDisponibles) {
+            const dniAsString = String(especialista.dni).trim();
+            
+            if (!disponibilidadPorEspecialista.has(dniAsString)) {
+                disponibilidadPorEspecialista.set(dniAsString, []);
+                cargaEspecialistas.set(dniAsString, 0);
+            }
+            disponibilidadPorEspecialista.get(dniAsString).push(especialista);
+            
+            const especialistaInfo = { 
+                dni: dniAsString, 
+                nombre: especialista.apellidosNombresCompletos 
+            };
+            
             if (especialista.sede1DePreferenciaPresencial === 'REM') {
                 especialistasREM.set(dniAsString, especialistaInfo);
             } else if (especialista.sede1DePreferenciaPresencial === 'VIR') {
@@ -86,345 +280,449 @@ async function procesarMatch(semestre) {
             }
         }
         
-        const infoParaMapa = {
-            dni: dniAsString,
-            nombre: especialista.apellidosNombresCompletos,
-            disponibilidad: { dia: especialista.dia, franja: especialista.franja, sede: especialista.sede1DePreferenciaPresencial, turno: especialista.turno, hora: especialista.hora }
-        };
-        const keyConSede = `${especialista.dia}-${especialista.sede1DePreferenciaPresencial}-${especialista.franja}`;
-        if (!disponibilidadMap.has(keyConSede)) disponibilidadMap.set(keyConSede, []);
-        disponibilidadMap.get(keyConSede).push(infoParaMapa);
-        const keySinSede = `${especialista.dia}-${especialista.franja}`;
-        if (!disponibilidadSinSedeMap.has(keySinSede)) disponibilidadSinSedeMap.set(keySinSede, []);
-        disponibilidadSinSedeMap.get(keySinSede).push(infoParaMapa);
-    }
-
-    const horariosPorSeccionMap = new Map();
-    for (const horario of horariosCursos) {
-        if (!horariosPorSeccionMap.has(horario.seccion)) {
-            horariosPorSeccionMap.set(horario.seccion, []);
+        // Mapas de cursos y horarios optimizados
+        const horariosPorSeccionMap = new Map();
+        for (const horario of horariosCursos) {
+            if (!horariosPorSeccionMap.has(horario.seccion)) {
+                horariosPorSeccionMap.set(horario.seccion, []);
+            }
+            horariosPorSeccionMap.get(horario.seccion).push(horario);
         }
-        horariosPorSeccionMap.get(horario.seccion).push(horario);
-    }
-
-    const cursosMap = new Map(cursosDocentes.map(curso => [curso.seccion, curso]));
-    
-    const mapaAsignacionPrevia = new Map();
-    for (const asignacion of asignacionesAnteriores) {
-        if (!mapaAsignacionPrevia.has(asignacion.idDocente)) {
-            mapaAsignacionPrevia.set(asignacion.idDocente, {
-                dni: asignacion.especialistaDni,
-                nombre: asignacion.nombreEspecialista,
-                tieneAsignacion: !!asignacion.especialistaDni, // Simplificamos a boolean
-                // Guardamos datos del docente para el historial
-                docente: asignacion.docente,
-                codigoDocente: asignacion.codigoDocente,
-                pidd: asignacion.pidd
-            });
-        }
-    }
-
-    // 🆕 4. DETECTAR DOCENTES QUE FUERON ELIMINADOS DE LA PROGRAMACIÓN
-    const docentesEnNuevaProgramacion = new Set(perfilesDocentes.map(p => p.idDocente));
-    const docentesConAsignacionPrevia = new Set(mapaAsignacionPrevia.keys());
-    const docentesEliminados = [...docentesConAsignacionPrevia].filter(idDocente => 
-        !docentesEnNuevaProgramacion.has(idDocente)
-    );
-
-    console.log(`Docentes eliminados de la programación: ${docentesEliminados.length}`);
-    if (docentesEliminados.length > 0) {
-        console.log(`IDs de docentes eliminados:`, docentesEliminados);
-    }
-
-    // 5. Agrupar perfiles por docente, ordenarlos y separarlos por prioridad.
-    const perfilesPorDocente = new Map();
-    for (const perfil of perfilesDocentes) {
-        if (!perfilesPorDocente.has(perfil.idDocente)) {
-            perfilesPorDocente.set(perfil.idDocente, []);
-        }
-        perfilesPorDocente.get(perfil.idDocente).push(perfil);
-    }
-
-    const docentesPrioritarios = new Map();
-    const docentesRegulares = new Map();
-
-    for (const [idDocente, perfiles] of perfilesPorDocente.entries()) {
-        perfiles.sort((a, b) => (a.promedioEsa ?? Infinity) - (b.promedioEsa ?? Infinity));
-        const perfilBase = perfiles[0];
-        const pidd = perfilBase.pidd;
-        if (pidd && (pidd.tipoPlanIntegral === 'ESA POR CURSO' || pidd.tipoPlanIntegral === 'ESA POR CURSO-GENERAL') && pidd.codCurso) {
-            docentesPrioritarios.set(idDocente, perfiles);
-        } else {
-            docentesRegulares.set(idDocente, perfiles);
-        }
-    }
-
-    console.log(`Docentes Prioritarios (con PIDD por curso): ${docentesPrioritarios.size}`);
-    console.log(`Docentes Regulares: ${docentesRegulares.size}`);
-
-    // 6. Procesamiento y generación de historial.
-    const resultadosDelMatch = [];
-    const historialAGuardar = [];
-    const docentesYaAsignados = new Set();
-
-    // --- BUCLE 1: PROCESAR DOCENTES PRIORITARIOS ---
-    for (const [idDocente, perfilesOrdenados] of docentesPrioritarios.entries()) {
-        if (docentesYaAsignados.has(idDocente)) continue;
-        const seccionesDelCursoEspecifico = cursosDocentes
-            .filter(c => c.idDocente === idDocente && c.codCurso === perfilesOrdenados[0].pidd.codCurso)
-            .map(c => c.seccion);
-        const horariosParaBuscar = horariosCursos.filter(h => seccionesDelCursoEspecifico.includes(h.seccion));
         
-        await procesarAsignacionParaDocente(idDocente, perfilesOrdenados, horariosParaBuscar, mapaAsignacionPrevia, disponibilidadMap, disponibilidadSinSedeMap, cursosMap, horariosPorSeccionMap, cursosDocentes, resultadosDelMatch, historialAGuardar, semestre, cargaEspecialistas, especialistasREM, especialistasVIR);
-        docentesYaAsignados.add(idDocente);
-    }
-
-    // --- BUCLE 2: PROCESAR DOCENTES REGULARES ---
-    for (const [idDocente, perfilesOrdenados] of docentesRegulares.entries()) {
-        if (docentesYaAsignados.has(idDocente)) continue;
-        const horariosParaBuscar = perfilesOrdenados.flatMap(p => {
-            const cursosDelPerfil = cursosDocentes.filter(c => c.idDocente === p.idDocente && c.programa === p.programa && c.modalidad === p.modalidad);
-            return cursosDelPerfil.flatMap(c => (horariosPorSeccionMap.get(c.seccion) || []));
-        });
+        const cursosMap = new Map(cursosDocentes.map(curso => [curso.seccion, curso]));
         
-        await procesarAsignacionParaDocente(idDocente, perfilesOrdenados, horariosParaBuscar, mapaAsignacionPrevia, disponibilidadMap, disponibilidadSinSedeMap, cursosMap, horariosPorSeccionMap, cursosDocentes, resultadosDelMatch, historialAGuardar, semestre, cargaEspecialistas, especialistasREM, especialistasVIR);
-        docentesYaAsignados.add(idDocente);
-    }
-
-    // 🆕 --- BUCLE 3: PROCESAR DOCENTES ELIMINADOS COMO DESASIGNACIONES ---
-    for (const idDocenteEliminado of docentesEliminados) {
-        const asignacionPrevia = mapaAsignacionPrevia.get(idDocenteEliminado);
+        // Mapas por docente para evitar filtros repetidos
+        const cursosPorDocenteMap = new Map();
+        const seccionesPorDocenteMap = new Map();
         
-        if (asignacionPrevia && asignacionPrevia.tieneAsignacion) {
-            // Crear un registro de historial como DESASIGNADO
-            const registroDesasignacion = {
-                semestre: semestre,
-                idDocente: idDocenteEliminado,
-                docente: asignacionPrevia.docente || `Docente ${idDocenteEliminado}`,
-                codigoDocente: asignacionPrevia.codigoDocente || idDocenteEliminado,
-                especialistaDni: null, // Ya no tiene especialista
-                nombreEspecialista: null,
-                cursos: [], // Ya no tiene cursos porque fue eliminado
-                pidd: asignacionPrevia.pidd || null,
-                estadoCambio: 'DESASIGNADO', // Único estado que importa
-                detalleAnterior: {
-                    especialistaDni: asignacionPrevia.dni,
-                    nombreEspecialista: asignacionPrevia.nombre
-                }
-            };
-
-            historialAGuardar.push(registroDesasignacion);
+        for (const curso of cursosDocentes) {
+            if (!cursosPorDocenteMap.has(curso.idDocente)) {
+                cursosPorDocenteMap.set(curso.idDocente, []);
+                seccionesPorDocenteMap.set(curso.idDocente, new Set());
+            }
+            cursosPorDocenteMap.get(curso.idDocente).push(curso);
+            seccionesPorDocenteMap.get(curso.idDocente).add(curso.seccion);
+        }
+        
+        console.log('✅ Mapas creados exitosamente');
+        
+        // 5. DETECTAR DOCENTES ELIMINADOS
+        const docentesEnNuevaProgramacion = new Set(perfilesDocentes.map(p => p.idDocente));
+        const docentesEliminados = [...mapaAsignacionPrevia.keys()].filter(idDocente => 
+            !docentesEnNuevaProgramacion.has(idDocente)
+        );
+        
+        console.log(`🗑️ Docentes eliminados: ${docentesEliminados.length}`);
+        
+        // 6. SEPARACIÓN OPTIMIZADA POR PIDD
+        const docentesPrioritarios = [];
+        const docentesRegulares = [];
+        
+        for (const perfil of perfilesDocentes) {
+            const tienePiddEspecifico = perfil.pidd && 
+                (perfil.pidd.tipoPlanIntegral === 'ESA POR CURSO' || 
+                 perfil.pidd.tipoPlanIntegral === 'ESA POR CURSO-GENERAL') && 
+                perfil.pidd.codCurso;
             
-            console.warn(`DESASIGNADO: Docente [${idDocenteEliminado}] eliminado de programación (tenía asignado: ${asignacionPrevia.nombre})`);
-        }
-    }
-
-    // 7. Guardar los resultados en ambas colecciones.
-    if (resultadosDelMatch.length > 0 || historialAGuardar.length > 0) {
-        const matchesCount = resultadosDelMatch.filter(r => r.especialistaDni !== null).length;
-        const desasignacionesPorEliminacion = docentesEliminados.length;
-        
-        console.log(`\nResumen: ${matchesCount} con match, ${resultadosDelMatch.length - matchesCount} sin match, ${desasignacionesPorEliminacion} desasignados por eliminación.`);
-        
-        // Guardar asignaciones (solo docentes que siguen en la programación)
-        if (resultadosDelMatch.length > 0) {
-            await AsignacionEspecialistaDocente.insertMany(resultadosDelMatch.map(r => ({...r, fechaHoraEjecucion})));
-            console.log('Resultados de la ejecución guardados exitosamente.');
-        }
-
-        // Guardar historial completo (incluyendo desasignaciones por eliminación)
-        if (historialAGuardar.length > 0) {
-            const historialConIds = await HistorialAsignacion.insertMany(historialAGuardar.map(h => ({...h, fechaHoraEjecucion})));
-            console.log(`Historial completo (${historialConIds.length} registros) guardado.`);
-            
-            // Mostrar resumen de cambios por tipo
-            const resumenCambios = historialConIds.reduce((acc, h) => {
-                acc[h.estadoCambio] = (acc[h.estadoCambio] || 0) + 1;
-                return acc;
-            }, {});
-            console.log('Resumen de cambios:', resumenCambios);
-
-            // Generar notificaciones automáticamente
-            try {
-                const notificacionesCreadas = await generarNotificacionesParaEspecialistas(historialConIds);
-                console.log(`${notificacionesCreadas.length} notificaciones generadas para especialistas.`);
-            } catch (notifError) {
-                console.error('Error al generar notificaciones:', notifError);
+            if (tienePiddEspecifico) {
+                docentesPrioritarios.push(perfil);
+            } else {
+                docentesRegulares.push(perfil);
             }
         }
         
+        console.log(`🎯 Docentes PIDD específico: ${docentesPrioritarios.length}, Regulares: ${docentesRegulares.length}`);
+        
+        // 7. PROCESAMIENTO EN LOTES OPTIMIZADO
+        const nuevasAsignaciones = [];
+        const historialAGuardar = [];
+        
+        console.log('🔄 Procesando docentes prioritarios...');
+        await procesarDocentesEnLotes(
+            docentesPrioritarios,
+            'PRIORITARIO',
+            cursosPorDocenteMap,
+            seccionesPorDocenteMap,
+            horariosPorSeccionMap,
+            cursosMap,
+            mapaAsignacionPrevia,
+            disponibilidadPorEspecialista,
+            especialistasREM,
+            especialistasVIR,
+            cargaEspecialistas,
+            nuevasAsignaciones,
+            historialAGuardar,
+            semestre
+        );
+        
+        console.log('🔄 Procesando docentes regulares...');
+        await procesarDocentesEnLotes(
+            docentesRegulares,
+            'REGULAR',
+            cursosPorDocenteMap,
+            seccionesPorDocenteMap,
+            horariosPorSeccionMap,
+            cursosMap,
+            mapaAsignacionPrevia,
+            disponibilidadPorEspecialista,
+            especialistasREM,
+            especialistasVIR,
+            cargaEspecialistas,
+            nuevasAsignaciones,
+            historialAGuardar,
+            semestre
+        );
+        
+        // 8. PROCESAR DOCENTES ELIMINADOS
+        for (const idDocenteEliminado of docentesEliminados) {
+            const asignacionPrevia = mapaAsignacionPrevia.get(idDocenteEliminado);
+            
+            if (asignacionPrevia?.tieneAsignacion) {
+                historialAGuardar.push({
+                    semestre: semestre,
+                    idDocente: idDocenteEliminado,
+                    docente: asignacionPrevia.docente || `Docente ${idDocenteEliminado}`,
+                    codigoDocente: asignacionPrevia.codigoDocente || idDocenteEliminado,
+                    especialistaDni: null,
+                    nombreEspecialista: null,
+                    cursos: [],
+                    pidd: asignacionPrevia.pidd || null,
+                    estadoCambio: 'DESASIGNADO',
+                    detalleAnterior: {
+                        especialistaDni: asignacionPrevia.dni,
+                        nombreEspecialista: asignacionPrevia.nombre
+                    }
+                });
+            }
+        }
+        
+        // 9. GUARDAR RESULTADOS SIN TRANSACCIÓN (Compatible con MongoDB standalone)
+        console.log('💾 Guardando resultados...');
+        
+        try {
+            // Eliminar estado anterior
+            const deleteResult = await AsignacionEspecialistaDocente.deleteMany({ semestre });
+            console.log(`🗑️ Estado anterior eliminado: ${deleteResult.deletedCount} registros`);
+            
+            // Insertar nuevo estado en lotes
+            if (nuevasAsignaciones.length > 0) {
+                const nuevasAsignacionesConFecha = nuevasAsignaciones.map(asignacion => ({
+                    ...asignacion,
+                    fechaHoraEjecucion
+                }));
+                
+                // Insertar en lotes de 1000
+                const tamanoLote = 1000;
+                for (let i = 0; i < nuevasAsignacionesConFecha.length; i += tamanoLote) {
+                    const lote = nuevasAsignacionesConFecha.slice(i, i + tamanoLote);
+                    try {
+                        await AsignacionEspecialistaDocente.insertMany(lote, { 
+                            ordered: false,
+                            writeConcern: { w: 1 } // Escritura rápida
+                        });
+                        console.log(`📦 Lote ${Math.floor(i/tamanoLote) + 1} insertado: ${lote.length} registros`);
+                    } catch (insertError) {
+                        console.error(`❌ Error insertando lote ${Math.floor(i/tamanoLote) + 1}:`, insertError.message);
+                        // Continúar con el siguiente lote
+                    }
+                }
+                console.log(`✅ Total insertado: ${nuevasAsignaciones.length} asignaciones`);
+            }
+            
+            // Guardar historial en lotes
+            if (historialAGuardar.length > 0) {
+                const historialConFecha = historialAGuardar.map(h => ({
+                    ...h, 
+                    fechaHoraEjecucion
+                }));
+                
+                const tamanoLoteHistorial = 1000;
+                for (let i = 0; i < historialConFecha.length; i += tamanoLoteHistorial) {
+                    const lote = historialConFecha.slice(i, i + tamanoLoteHistorial);
+                    try {
+                        await HistorialAsignacion.insertMany(lote, { 
+                            ordered: false,
+                            writeConcern: { w: 1 }
+                        });
+                    } catch (historialError) {
+                        console.error(`❌ Error insertando historial lote ${Math.floor(i/tamanoLoteHistorial) + 1}:`, historialError.message);
+                    }
+                }
+                console.log(`📝 Historial guardado: ${historialAGuardar.length} registros`);
+            }
+            
+        } catch (saveError) {
+            console.error('❌ Error durante el guardado:', saveError);
+            throw new Error(`Error guardando resultados: ${saveError.message}`);
+        }
+        
+        // 10. GENERAR NOTIFICACIONES ASÍNCRONAMENTE (CORREGIDO)
+        if (historialAGuardar.length > 0) {
+            // No bloquear la respuesta con las notificaciones
+            setImmediate(async () => {
+                try {
+                    // Obtener los registros del historial con sus IDs generados
+                    const historialConIds = await HistorialAsignacion.find({
+                        semestre: semestre,
+                        fechaHoraEjecucion: fechaHoraEjecucion
+                    }).lean();
+                    
+                    console.log(`🔔 Generando notificaciones para ${historialConIds.length} registros del historial...`);
+                    
+                    // Filtrar solo los registros que necesitan notificación
+                    const registrosParaNotificar = historialConIds.filter(h => 
+                        h.especialistaDni && 
+                        ['ASIGNACION_NUEVA', 'REASIGNADO', 'DESASIGNADO'].includes(h.estadoCambio)
+                    );
+                    
+                    if (registrosParaNotificar.length > 0) {
+                        const notificacionesCreadas = await generarNotificacionesParaEspecialistas(registrosParaNotificar);
+                        console.log(`✅ ${notificacionesCreadas.length} notificaciones generadas para especialistas`);
+                    } else {
+                        console.log(`ℹ️ No hay registros que requieran notificación`);
+                    }
+                } catch (notifError) {
+                    console.error('❌ Error al generar notificaciones:', notifError.message);
+                    // No lanzar error para que no afecte el proceso principal
+                }
+            });
+        }
+        
+        // 11. RESULTADO FINAL
+        const matchesCount = nuevasAsignaciones.filter(a => a.especialistaDni !== null).length;
+        const sinMatchCount = nuevasAsignaciones.length - matchesCount;
+        const tiempoTotal = Date.now() - tiempoInicio;
+        
+        console.log(`\n🎉 === RESUMEN FINAL ===`);
+        console.log(`✅ Docentes con match: ${matchesCount}`);
+        console.log(`❌ Docentes sin match: ${sinMatchCount}`);
+        console.log(`📊 Total procesado: ${nuevasAsignaciones.length}`);
+        console.log(`🗑️ Docentes eliminados: ${docentesEliminados.length}`);
+        console.log(`⏱️ Tiempo total: ${(tiempoTotal / 1000).toFixed(2)} segundos`);
+        console.log(`🚀 Velocidad: ${(nuevasAsignaciones.length / (tiempoTotal / 1000)).toFixed(0)} docentes/segundo`);
+        
         return { 
-            message: 'Proceso de match finalizado.', 
-            totalProcesados: resultadosDelMatch.length, 
+            message: 'Proceso de match OPTIMIZADO finalizado.', 
+            totalProcesados: nuevasAsignaciones.length, 
             matches: matchesCount, 
-            sinMatch: resultadosDelMatch.length - matchesCount,
-            desasignacionesPorEliminacion: desasignacionesPorEliminacion,
+            sinMatch: sinMatchCount,
+            eliminados: docentesEliminados.length,
+            tiempoEjecucion: tiempoTotal,
+            velocidad: Math.round(nuevasAsignaciones.length / (tiempoTotal / 1000)),
             resumenCambios: historialAGuardar.reduce((acc, h) => {
                 acc[h.estadoCambio] = (acc[h.estadoCambio] || 0) + 1;
                 return acc;
             }, {})
         };
-    } else {
-        return { 
-            message: 'Proceso finalizado, no se generaron documentos.', 
-            totalProcesados: 0, 
-            matches: 0, 
-            sinMatch: 0,
-            desasignacionesPorEliminacion: 0
-        };
+        
+    } catch (error) {
+        console.error('❌ Error en procesarMatchOptimizado:', error);
+        throw error;
     }
 }
 
-/**
- * Lógica encapsulada para procesar la asignación de un único docente.
- */
-async function procesarAsignacionParaDocente(idDocente, perfilesOrdenados, horariosParaBuscar, mapaAsignacionPrevia, disponibilidadMap, disponibilidadSinSedeMap, cursosMap, horariosPorSeccionMap, cursosDocentes, resultadosDelMatch, historialAGuardar, semestre, cargaEspecialistas, especialistasREM, especialistasVIR) {
+// ===== FUNCIÓN PARA PROCESAR EN LOTES =====
+
+async function procesarDocentesEnLotes(
+    docentes,
+    tipo,
+    cursosPorDocenteMap,
+    seccionesPorDocenteMap,
+    horariosPorSeccionMap,
+    cursosMap,
+    mapaAsignacionPrevia,
+    disponibilidadPorEspecialista,
+    especialistasREM,
+    especialistasVIR,
+    cargaEspecialistas,
+    nuevasAsignaciones,
+    historialAGuardar,
+    semestre
+) {
+    const tamanoLote = 100; // Procesar de 100 en 100
+    
+    for (let i = 0; i < docentes.length; i += tamanoLote) {
+        const lote = docentes.slice(i, i + tamanoLote);
+        const numeroLote = Math.floor(i/tamanoLote) + 1;
+        const totalLotes = Math.ceil(docentes.length/tamanoLote);
+        
+        console.log(`📦 Procesando lote ${numeroLote}/${totalLotes} (${lote.length} docentes ${tipo})`);
+        
+        // Procesar lote en paralelo con Promise.all
+        const promesasLote = lote.map(perfil => 
+            procesarAsignacionOptimizada(
+                perfil,
+                tipo,
+                cursosPorDocenteMap,
+                seccionesPorDocenteMap,
+                horariosPorSeccionMap,
+                cursosMap,
+                mapaAsignacionPrevia,
+                disponibilidadPorEspecialista,
+                especialistasREM,
+                especialistasVIR,
+                cargaEspecialistas,
+                semestre
+            )
+        );
+        
+        const resultadosLote = await Promise.all(promesasLote);
+        
+        // Agregar resultados al array principal
+        for (const resultado of resultadosLote) {
+            if (resultado.nuevaAsignacion) {
+                nuevasAsignaciones.push(resultado.nuevaAsignacion);
+            }
+            if (resultado.historial) {
+                historialAGuardar.push(resultado.historial);
+            }
+        }
+        
+        // Pequeña pausa para no saturar el sistema
+        if (i + tamanoLote < docentes.length) {
+            await new Promise(resolve => setTimeout(resolve, 5));
+        }
+    }
+}
+
+// ===== FUNCIÓN DE ASIGNACIÓN OPTIMIZADA =====
+
+async function procesarAsignacionOptimizada(
+    perfil,
+    tipo,
+    cursosPorDocenteMap,
+    seccionesPorDocenteMap,
+    horariosPorSeccionMap,
+    cursosMap,
+    mapaAsignacionPrevia,
+    disponibilidadPorEspecialista,
+    especialistasREM,
+    especialistasVIR,
+    cargaEspecialistas,
+    semestre
+) {
+    const idDocente = perfil.idDocente;
     const especialistaPrevio = mapaAsignacionPrevia.get(idDocente);
+    
     let infoDelEspecialistaAsignado = null;
     let estadoCambio = '';
-    const perfilBase = perfilesOrdenados[0];
-    const esVirtualSincrono = perfilBase.modalidad === 'Virtual Síncrono';
-    const esVirtualAsincrono = perfilBase.modalidad === 'Virtual Asíncrono';
-    const esHibrido = perfilBase.modalidad === 'Híbrida';
-    const todosLosEspecialistas = Array.from(cargaEspecialistas.keys()).map(dni => ({ dni, nombre: especialistasREM.get(dni)?.nombre || especialistasVIR.get(dni)?.nombre || 'Especialista Presencial' }));
-
+    
+    // Obtener cursos y horarios del docente de forma optimizada
+    const cursosDelDocente = cursosPorDocenteMap.get(idDocente) || [];
+    let horariosParaBuscar = [];
+    
+    if (tipo === 'PRIORITARIO' && perfil.pidd?.codCurso) {
+        // Solo cursos del PIDD específico
+        const cursosEspecificos = cursosDelDocente.filter(c => c.codCurso === perfil.pidd.codCurso);
+        horariosParaBuscar = cursosEspecificos.flatMap(c => 
+            horariosPorSeccionMap.get(c.seccion) || []
+        );
+    } else {
+        // Todos los cursos del programa/modalidad
+        const cursosDelPerfil = cursosDelDocente.filter(c => 
+            c.programa === perfil.programa && c.modalidad === perfil.modalidad
+        );
+        horariosParaBuscar = cursosDelPerfil.flatMap(c => 
+            horariosPorSeccionMap.get(c.seccion) || []
+        );
+    }
+    
+    // Lógica de asignación según modalidad
+    const esVirtualAsincrono = perfil.modalidad === 'Virtual Asíncrono';
+    const esVirtualSincrono = perfil.modalidad === 'Virtual Síncrono';
+    
     if (esVirtualAsincrono) {
-        // --- LÓGICA PARA VIRTUAL ASÍNCRONO ---
-        console.log(`INFO: Docente [${idDocente}] es Asíncrono. Buscando especialista VIR.`);
-        if (especialistaPrevio && especialistaPrevio.tieneAsignacion && especialistasVIR.has(especialistaPrevio.dni)) {
+        // Especialistas VIR - asignación automática
+        if (especialistaPrevio?.tieneAsignacion && especialistasVIR.has(especialistaPrevio.dni)) {
             infoDelEspecialistaAsignado = { dni: especialistaPrevio.dni, nombre: especialistaPrevio.nombre };
             estadoCambio = 'MANTENIDO';
-        } else if (!especialistaPrevio && especialistasVIR.size > 0) {
-            const listaEspecialistasVIR = Array.from(especialistasVIR.values());
-            infoDelEspecialistaAsignado = listaEspecialistasVIR.sort((a, b) => (cargaEspecialistas.get(a.dni) || 0) - (cargaEspecialistas.get(b.dni) || 0))[0];
+        } else if (especialistasVIR.size > 0) {
+            const especialistasOrdenados = Array.from(especialistasVIR.values())
+                .sort((a, b) => (cargaEspecialistas.get(a.dni) || 0) - (cargaEspecialistas.get(b.dni) || 0));
+            infoDelEspecialistaAsignado = especialistasOrdenados[0];
+            estadoCambio = especialistaPrevio?.tieneAsignacion ? 'REASIGNADO' : 'ASIGNACION_NUEVA';
         }
     } else if (esVirtualSincrono) {
-        // --- LÓGICA PARA VIRTUAL SÍNCRONO ---
-        console.log(`INFO: Docente [${idDocente}] es Síncrono. Buscando especialista REM.`);
-        if (especialistaPrevio && especialistaPrevio.tieneAsignacion && especialistasREM.has(especialistaPrevio.dni)) {
+        // Especialistas REM - asignación automática
+        if (especialistaPrevio?.tieneAsignacion && especialistasREM.has(especialistaPrevio.dni)) {
             infoDelEspecialistaAsignado = { dni: especialistaPrevio.dni, nombre: especialistaPrevio.nombre };
             estadoCambio = 'MANTENIDO';
-        } else if (!especialistaPrevio && especialistasREM.size > 0) {
-            const listaEspecialistasREM = Array.from(especialistasREM.values());
-            infoDelEspecialistaAsignado = listaEspecialistasREM.sort((a, b) => (cargaEspecialistas.get(a.dni) || 0) - (cargaEspecialistas.get(b.dni) || 0))[0];
-        }
-    } else if (esHibrido) {
-        // --- LÓGICA PARA HÍBRIDO ---
-        console.log(`INFO: Docente [${idDocente}] es Híbrido. Verificando cada horario.`);
-        if (especialistaPrevio && especialistaPrevio.tieneAsignacion) {
-            for (const horario of horariosParaBuscar) {
-                const esHorarioVirtual = horario.edificio === '';
-                const mapaDeBusqueda = esHorarioVirtual ? disponibilidadSinSedeMap : disponibilidadMap;
-                const key = esHorarioVirtual ? `${horario.dia}-${horario.hora}` : `${horario.dia}-${horario.campus}-${horario.hora}`;
-                if ((mapaDeBusqueda.get(key) || []).some(e => e.dni === especialistaPrevio.dni)) {
-                    infoDelEspecialistaAsignado = { dni: especialistaPrevio.dni, nombre: especialistaPrevio.nombre };
-                    estadoCambio = 'MANTENIDO';
-                    break;
-                }
-            }
-        }
-        
-        if (!infoDelEspecialistaAsignado) {
-            // Prioridad 1: Buscar un especialista REM que cubra CUALQUIER horario virtual.
-            const todosLosEspecialistasREM = new Map();
-            for (const horario of horariosParaBuscar) {
-                if (horario.edificio === '') { // Es un horario virtual
-                    const key = `${horario.dia}-${horario.hora}`;
-                    const especialistasEnHorario = (disponibilidadSinSedeMap.get(key) || []).filter(e => especialistasREM.has(e.dni));
-                    for (const especialista of especialistasEnHorario) {
-                        if (!todosLosEspecialistasREM.has(especialista.dni)) {
-                            todosLosEspecialistasREM.set(especialista.dni, especialista);
-                        }
-                    }
-                }
-            }
-            if (todosLosEspecialistasREM.size > 0) {
-                const listaEspecialistas = Array.from(todosLosEspecialistasREM.values());
-                infoDelEspecialistaAsignado = listaEspecialistas.sort((a, b) =>
-                    (cargaEspecialistas.get(a.dni) || 0) - (cargaEspecialistas.get(b.dni) || 0)
-                )[0];
-            }
-            
-            // Prioridad 2: Si no se encontró especialista REM, buscar uno presencial que cubra CUALQUIER horario presencial.
-            if (!infoDelEspecialistaAsignado) {
-                const todosLosEspecialistasPresenciales = new Map();
-                for (const horario of horariosParaBuscar) {
-                    if (horario.edificio !== '') { // Es un horario presencial
-                        const key = `${horario.dia}-${horario.campus}-${horario.hora}`;
-                        const especialistasEnHorario = (disponibilidadMap.get(key) || []).filter(e => !especialistasREM.has(e.dni) && !especialistasVIR.has(e.dni));
-                        for (const especialista of especialistasEnHorario) {
-                            if (!todosLosEspecialistasPresenciales.has(especialista.dni)) {
-                                todosLosEspecialistasPresenciales.set(especialista.dni, especialista);
-                            }
-                        }
-                    }
-                }
-                if (todosLosEspecialistasPresenciales.size > 0) {
-                    const listaEspecialistas = Array.from(todosLosEspecialistasPresenciales.values());
-                    infoDelEspecialistaAsignado = listaEspecialistas.sort((a, b) =>
-                        (cargaEspecialistas.get(a.dni) || 0) - (cargaEspecialistas.get(b.dni) || 0)
-                    )[0];
-                }
-            }
+        } else if (especialistasREM.size > 0) {
+            const especialistasOrdenados = Array.from(especialistasREM.values())
+                .sort((a, b) => (cargaEspecialistas.get(a.dni) || 0) - (cargaEspecialistas.get(b.dni) || 0));
+            infoDelEspecialistaAsignado = especialistasOrdenados[0];
+            estadoCambio = especialistaPrevio?.tieneAsignacion ? 'REASIGNADO' : 'ASIGNACION_NUEVA';
         }
     } else {
-        // --- LÓGICA PARA MODALIDAD PRESENCIAL ---
-        if (especialistaPrevio && especialistaPrevio.tieneAsignacion) {
-            for (const horario of horariosParaBuscar) {
-                const key = `${horario.dia}-${horario.campus}-${horario.hora}`;
-                if ((disponibilidadMap.get(key) || []).some(e => e.dni === especialistaPrevio.dni)) {
-                    infoDelEspecialistaAsignado = { dni: especialistaPrevio.dni, nombre: especialistaPrevio.nombre };
-                    estadoCambio = 'MANTENIDO';
-                    break;
-                }
+        // Modalidad presencial/híbrida - verificar disponibilidad horaria
+        if (especialistaPrevio?.tieneAsignacion) {
+            const puedeMantenerse = puedeEspecialistaAcompañarDocenteOptimizado(
+                especialistaPrevio.dni, 
+                horariosParaBuscar, 
+                disponibilidadPorEspecialista
+            );
+            
+            if (puedeMantenerse) {
+                infoDelEspecialistaAsignado = { dni: especialistaPrevio.dni, nombre: especialistaPrevio.nombre };
+                estadoCambio = 'MANTENIDO';
             }
         }
         
+        // Si no puede mantener o no tenía asignación, buscar nuevo especialista
         if (!infoDelEspecialistaAsignado) {
-            const todosLosEspecialistasDisponibles = new Map();
+            const especialistasViables = [];
             
-            for (const horario of horariosParaBuscar) {
-                const key = `${horario.dia}-${horario.campus}-${horario.hora}`;
-                const especialistasEnEsteHorario = disponibilidadMap.get(key);
+            // Iterar por todos los especialistas disponibles
+            for (const [dni, disponibilidades] of disponibilidadPorEspecialista.entries()) {
+                const puedeAcompañar = puedeEspecialistaAcompañarDocenteOptimizado(
+                    dni, 
+                    horariosParaBuscar, 
+                    disponibilidadPorEspecialista
+                );
                 
-                if (especialistasEnEsteHorario) {
-                    for (const especialista of especialistasEnEsteHorario) {
-                        if (!todosLosEspecialistasDisponibles.has(especialista.dni)) {
-                            todosLosEspecialistasDisponibles.set(especialista.dni, especialista);
-                        }
-                    }
+                if (puedeAcompañar) {
+                    especialistasViables.push({
+                        dni,
+                        nombre: disponibilidades[0].apellidosNombresCompletos,
+                        carga: cargaEspecialistas.get(dni) || 0
+                    });
                 }
             }
             
-            if (todosLosEspecialistasDisponibles.size > 0) {
-                const listaEspecialistas = Array.from(todosLosEspecialistasDisponibles.values());
-                infoDelEspecialistaAsignado = listaEspecialistas.sort((a, b) => 
-                    (cargaEspecialistas.get(a.dni) || 0) - (cargaEspecialistas.get(b.dni) || 0)
-                )[0];
+            if (especialistasViables.length > 0) {
+                // Ordenar por carga (menor carga primero)
+                especialistasViables.sort((a, b) => a.carga - b.carga);
+                infoDelEspecialistaAsignado = especialistasViables[0];
+                estadoCambio = especialistaPrevio?.tieneAsignacion ? 'REASIGNADO' : 'ASIGNACION_NUEVA';
             }
         }
     }
     
+    // Actualizar carga del especialista
     if (infoDelEspecialistaAsignado) {
-        cargaEspecialistas.set(infoDelEspecialistaAsignado.dni, (cargaEspecialistas.get(infoDelEspecialistaAsignado.dni) || 0) + 1);
+        cargaEspecialistas.set(infoDelEspecialistaAsignado.dni, 
+            (cargaEspecialistas.get(infoDelEspecialistaAsignado.dni) || 0) + 1);
     }
-
-    // --- PREPARAR DOCUMENTO FINAL ---
-    let documentoFinal;
+    
+    // Crear documento de asignación optimizado
     const todosLosCursosAnidados = [];
-    const todasLasSeccionesDelDocente = new Set(cursosDocentes.filter(c => c.idDocente === idDocente).map(c => c.seccion));
+    const seccionesDelDocente = seccionesPorDocenteMap.get(idDocente) || new Set();
+    
+    // Construir cursos con horarios de forma optimizada
     let primerMatchMarcado = false;
-
     const horariosElegibles = new Set(horariosParaBuscar.map(h => `${h.seccion}-${h.dia}-${h.hora}`));
-
-    todasLasSeccionesDelDocente.forEach(seccion => {
+    
+    seccionesDelDocente.forEach(seccion => {
         const infoCurso = cursosMap.get(seccion);
         const horariosDelCurso = horariosPorSeccionMap.get(seccion) || [];
+        
         if (infoCurso) {
             const horariosAnidados = horariosDelCurso.map(h => {
                 const horarioConAcompanamiento = { ...h };
+                
                 if (infoDelEspecialistaAsignado) {
                     if (esVirtualSincrono || esVirtualAsincrono) {
+                        // Para modalidades virtuales, marcar todos los horarios
                         const tipo = !primerMatchMarcado ? 'Recomendado' : 'Opcional';
                         horarioConAcompanamiento.acompanamiento = {
                             especialistaDni: infoDelEspecialistaAsignado.dni,
@@ -434,13 +732,14 @@ async function procesarAsignacionParaDocente(idDocente, perfilesOrdenados, horar
                         };
                         if (tipo === 'Recomendado') primerMatchMarcado = true;
                     } else {
+                        // Para modalidad presencial/híbrida, verificar disponibilidad específica
                         const horarioKey = `${h.seccion}-${h.dia}-${h.hora}`;
                         if (horariosElegibles.has(horarioKey)) {
-                            const esHorarioVirtualHibrido = esHibrido && h.edificio === '';
-                            const mapaDeBusqueda = esHorarioVirtualHibrido ? disponibilidadSinSedeMap : disponibilidadMap;
-                            const key = esHorarioVirtualHibrido ? `${h.dia}-${h.hora}` : `${h.dia}-${h.campus}-${h.hora}`;
-                            const especialistasEnHorario = mapaDeBusqueda.get(key);
-                            if (especialistasEnHorario?.some(e => e.dni === infoDelEspecialistaAsignado.dni)) {
+                            const puedeEsteHorario = disponibilidadPorEspecialista.get(infoDelEspecialistaAsignado.dni)?.some(registro => 
+                                cursoEstaEnDisponibilidad(h, registro)
+                            );
+                            
+                            if (puedeEsteHorario) {
                                 const tipo = !primerMatchMarcado ? 'Recomendado' : 'Opcional';
                                 horarioConAcompanamiento.acompanamiento = {
                                     especialistaDni: infoDelEspecialistaAsignado.dni,
@@ -453,64 +752,59 @@ async function procesarAsignacionParaDocente(idDocente, perfilesOrdenados, horar
                         }
                     }
                 }
+                
                 return horarioConAcompanamiento;
             });
-            todosLosCursosAnidados.push({ ...infoCurso, horarios: horariosAnidados });
+            
+            todosLosCursosAnidados.push({ 
+                ...infoCurso, 
+                horarios: horariosAnidados 
+            });
         }
     });
-
-    const detalleAnterior = { especialistaDni: especialistaPrevio?.dni || null, nombreEspecialista: especialistaPrevio?.nombre || null };
     
-    if (infoDelEspecialistaAsignado) {
-        documentoFinal = { 
-            ...perfilBase, 
-            especialistaDni: infoDelEspecialistaAsignado.dni, 
-            nombreEspecialista: infoDelEspecialistaAsignado.nombre, 
-            cursos: todosLosCursosAnidados, 
-            semestre: semestre
-        };
-        
-        if (estadoCambio !== 'MANTENIDO') {
-            estadoCambio = especialistaPrevio?.tieneAsignacion ? 'REASIGNADO' : 'ASIGNACION_NUEVA';
-            const logMsg = estadoCambio === 'REASIGNADO' ? `CAMBIO: Docente [${idDocente}] de [${especialistaPrevio.nombre}] a [${infoDelEspecialistaAsignado.nombre}]` : `NUEVO MATCH: Docente [${idDocente}] a [${infoDelEspecialistaAsignado.nombre}]`;
-            console[estadoCambio === 'REASIGNADO' ? 'warn' : 'log'](logMsg);
-        }
-    } else {
-        documentoFinal = { 
-            ...perfilBase, 
-            especialistaDni: null, 
-            nombreEspecialista: null, 
-            cursos: todosLosCursosAnidados, 
-            semestre: semestre
-        };
-        
+    // Determinar estado de cambio si no se asignó
+    if (!infoDelEspecialistaAsignado) {
         estadoCambio = especialistaPrevio?.tieneAsignacion ? 'DESASIGNADO' : 'PERMANECE_SIN_ASIGNAR';
-        const logMsg = estadoCambio === 'DESASIGNADO' ? `DESASIGNADO: Docente [${idDocente}]` : `SIN MATCH: Docente [${idDocente}]`;
-        console[estadoCambio === 'DESASIGNADO' ? 'warn' : 'log'](logMsg);
     }
     
-    delete documentoFinal._id;
-    delete documentoFinal.fechaHoraEjecucion;
+    // Crear documentos finales
+    const nuevaAsignacion = { 
+        ...perfil,
+        especialistaDni: infoDelEspecialistaAsignado?.dni || null, 
+        nombreEspecialista: infoDelEspecialistaAsignado?.nombre || null, 
+        cursos: todosLosCursosAnidados, 
+        semestre: semestre
+    };
     
-    // Agregar el estadoCambio al documento final para el historial
-    resultadosDelMatch.push(documentoFinal);
-    historialAGuardar.push({ ...documentoFinal, estadoCambio, detalleAnterior });
+    // Limpiar campos que no deben ir al nuevo estado
+    delete nuevaAsignacion._id;
+    delete nuevaAsignacion.fechaHoraEjecucion;
+    
+    const historial = { 
+        ...nuevaAsignacion, 
+        estadoCambio, 
+        detalleAnterior: { 
+            especialistaDni: especialistaPrevio?.dni || null, 
+            nombreEspecialista: especialistaPrevio?.nombre || null 
+        }
+    };
+    
+    return { nuevaAsignacion, historial };
 }
 
+// ===== ENDPOINTS OPTIMIZADOS =====
 
-// --- RUTAS DE LA API (Sin cambios, ya que consumen el resultado final) ---
-
-// GET: Endpoint unificado para obtener asignaciones.
+// GET: Endpoint optimizado para obtener asignaciones actuales
 router.get('/', async (req, res) => {
     try {
-        const { semestre, idDocente, dniEspecialista, tieneAsignacion, latest } = req.query;
+        const { semestre, idDocente, dniEspecialista, tieneAsignacion, limite = 30000, pagina = 1 } = req.query;
         const query = {};
         
         if (semestre) query.semestre = semestre;
         if (idDocente) query.idDocente = idDocente;
         if (dniEspecialista) query.especialistaDni = dniEspecialista;
         
-        // Reemplazar estadoGeneral por tieneAsignacion
         if (tieneAsignacion !== undefined) {
             if (tieneAsignacion === 'true') {
                 query.especialistaDni = { $ne: null };
@@ -518,26 +812,23 @@ router.get('/', async (req, res) => {
                 query.especialistaDni = null;
             }
         }
-
-        if (latest === 'true') {
-            const queryParaUltimaEjecucion = semestre ? { semestre } : {};
-            const ultimaEjecucion = await AsignacionEspecialistaDocente.findOne(queryParaUltimaEjecucion)
-                .sort({ fechaHoraEjecucion: -1 })
-                .lean();
-            if (ultimaEjecucion) {
-                query.fechaHoraEjecucion = ultimaEjecucion.fechaHoraEjecucion;
-            } else {
-                return res.json({ data: [], totalDocs: 0 });
-            }
-        }
-
-        let data = await AsignacionEspecialistaDocente.find(query)
-            .sort({ fechaHoraEjecucion: -1, 'docente': 1 })
-            .lean();
-
+        
+        // Paginación para manejar grandes volúmenes
+        const skip = (parseInt(pagina) - 1) * parseInt(limite);
+        
+        const [data, total] = await Promise.all([
+            AsignacionEspecialistaDocente.find(query)
+                .sort({ 'docente': 1 })
+                .limit(parseInt(limite))
+                .skip(skip)
+                .lean(),
+            AsignacionEspecialistaDocente.countDocuments(query)
+        ]);
+        
+        // Filtrar cursos por especialista si se especifica
         if (dniEspecialista && data.length > 0) {
-            data = data.map(asignacion => {
-                const cursosFiltrados = asignacion.cursos
+            data.forEach(asignacion => {
+                asignacion.cursos = asignacion.cursos
                     .map(curso => {
                         const horariosFiltrados = curso.horarios.filter(horario =>
                             horario.acompanamiento && horario.acompanamiento.especialistaDni === dniEspecialista
@@ -548,44 +839,242 @@ router.get('/', async (req, res) => {
                         return null;
                     })
                     .filter(curso => curso !== null);
-                return { ...asignacion, cursos: cursosFiltrados };
             });
         }
-
+        
         res.json({
             data: data,
-            totalDocs: data.length
+            totalDocs: total,
+            paginacion: {
+                pagina: parseInt(pagina),
+                limite: parseInt(limite),
+                total,
+                totalPaginas: Math.ceil(total / parseInt(limite))
+            },
+            message: `Estado actual del semestre ${semestre || 'todos'}`
         });
+        
     } catch (err) {
         console.error("Error al obtener las asignaciones:", err);
         res.status(500).json({ message: "Error al obtener las asignaciones: " + err.message });
     }
 });
 
-
-// POST: Inicia el proceso de match para un semestre
-router.post('/', async (req, res) => {
-    const { semestre } = req.body;
-
-    if (!semestre || !/^\d{4}-\d$/.test(semestre)) {
-        return res.status(400).json({ message: 'El parámetro semestre es requerido y debe tener el formato "YYYY-N".' });
-    }
-
+// GET: Endpoint optimizado para obtener el historial de cambios
+router.get('/historial', async (req, res) => {
     try {
-        // Se llama a la nueva función de match
-        const resultado = await procesarMatch(semestre);
-        res.status(201).json(resultado);
-    } catch (error) {
-        console.error('Error al crear la asignación:', error);
-        res.status(500).json({ message: 'Error interno del servidor.', error: error.message });
+        const { 
+            especialistaDni, 
+            estadoCambio, 
+            semestre, 
+            idDocente, 
+            tieneAsignacion,
+            fechaDesde,
+            fechaHasta,
+            limite = 100,
+            pagina = 1
+        } = req.query;
+        
+        const query = {};
+        
+        if (especialistaDni) query.especialistaDni = especialistaDni;
+        
+        if (estadoCambio) {
+            const estados = estadoCambio.split(',').map(e => e.trim().toUpperCase());
+            query.estadoCambio = { $in: estados };
+        }
+        
+        if (semestre) query.semestre = semestre;
+        if (idDocente) query.idDocente = idDocente;
+        
+        if (tieneAsignacion !== undefined) {
+            if (tieneAsignacion === 'true') {
+                query.especialistaDni = { $ne: null };
+            } else if (tieneAsignacion === 'false') {
+                query.especialistaDni = null;
+            }
+        }
+        
+        if (fechaDesde || fechaHasta) {
+            query.fechaHoraEjecucion = {};
+            if (fechaDesde) query.fechaHoraEjecucion.$gte = new Date(fechaDesde);
+            if (fechaHasta) query.fechaHoraEjecucion.$lte = new Date(fechaHasta);
+        }
+        
+        const skip = (parseInt(pagina) - 1) * parseInt(limite);
+        
+        const [historial, total] = await Promise.all([
+            HistorialAsignacion.find(query)
+                .sort({ fechaHoraEjecucion: -1, idDocente: 1 })
+                .limit(parseInt(limite))
+                .skip(skip)
+                .lean(),
+            HistorialAsignacion.countDocuments(query)
+        ]);
+        
+        // Estadísticas optimizadas
+        const resumen = historial.reduce((acc, registro) => {
+            acc[registro.estadoCambio] = (acc[registro.estadoCambio] || 0) + 1;
+            return acc;
+        }, {});
+        
+        const conAsignacion = historial.filter(h => h.especialistaDni !== null).length;
+        const sinAsignacion = historial.length - conAsignacion;
+        
+        res.json({
+            data: historial,
+            totalDocs: total,
+            paginacion: {
+                pagina: parseInt(pagina),
+                limite: parseInt(limite),
+                total,
+                totalPaginas: Math.ceil(total / parseInt(limite))
+            },
+            resumen: resumen,
+            estadisticas: {
+                conAsignacion,
+                sinAsignacion,
+                totalEspecialistasUnicos: [...new Set(historial.map(h => h.especialistaDni).filter(dni => dni))].length,
+                totalDocentesUnicos: [...new Set(historial.map(h => h.idDocente))].length
+            },
+            filtrosAplicados: {
+                especialistaDni: especialistaDni || null,
+                estadoCambio: estadoCambio || null,
+                semestre: semestre || null,
+                idDocente: idDocente || null,
+                tieneAsignacion: tieneAsignacion || null,
+                fechaDesde: fechaDesde || null,
+                fechaHasta: fechaHasta || null
+            }
+        });
+        
+    } catch (err) {
+        console.error('Error al obtener el historial de asignaciones:', err);
+        res.status(500).json({ 
+            message: 'Error al obtener el historial de asignaciones', 
+            error: err.message 
+        });
     }
 });
 
+// GET: Endpoint optimizado para estadísticas
+router.get('/estadisticas', async (req, res) => {
+    try {
+        const { semestre } = req.query;
+        const query = semestre ? { semestre } : {};
+        
+        // Agregaciones optimizadas en paralelo
+        const [
+            resumenGeneral,
+            especialistasActivos,
+            distribucionModalidad
+        ] = await Promise.all([
+            AsignacionEspecialistaDocente.aggregate([
+                { $match: query },
+                {
+                    $group: {
+                        _id: null,
+                        totalDocentes: { $sum: 1 },
+                        conAsignacion: {
+                            $sum: {
+                                $cond: [{ $ne: ['$especialistaDni', null] }, 1, 0]
+                            }
+                        },
+                        sinAsignacion: {
+                            $sum: {
+                                $cond: [{ $eq: ['$especialistaDni', null] }, 1, 0]
+                            }
+                        }
+                    }
+                }
+            ]),
+            
+            AsignacionEspecialistaDocente.aggregate([
+                { $match: { ...query, especialistaDni: { $ne: null } } },
+                { 
+                    $group: { 
+                        _id: '$especialistaDni', 
+                        nombreEspecialista: { $first: '$nombreEspecialista' },
+                        totalDocentes: { $sum: 1 } 
+                    } 
+                },
+                { $sort: { totalDocentes: -1 } },
+                { $limit: 10 }
+            ]),
+            
+            AsignacionEspecialistaDocente.aggregate([
+                { $match: query },
+                {
+                    $group: {
+                        _id: '$modalidad',
+                        total: { $sum: 1 },
+                        conAsignacion: {
+                            $sum: {
+                                $cond: [{ $ne: ['$especialistaDni', null] }, 1, 0]
+                            }
+                        }
+                    }
+                },
+                { $sort: { total: -1 } }
+            ])
+        ]);
+        
+        const estadisticas = resumenGeneral[0] || { totalDocentes: 0, conAsignacion: 0, sinAsignacion: 0 };
+        
+        res.json({
+            semestre: semestre || 'todos',
+            estadisticas: {
+                ...estadisticas,
+                porcentajeConAsignacion: estadisticas.totalDocentes > 0 ? 
+                    ((estadisticas.conAsignacion / estadisticas.totalDocentes) * 100).toFixed(2) : 0,
+                totalEspecialistas: especialistasActivos.length,
+                cargaPromedioPorEspecialista: especialistasActivos.length > 0 ? 
+                    (estadisticas.conAsignacion / especialistasActivos.length).toFixed(2) : 0,
+                top10EspecialistasMasDocentes: especialistasActivos,
+                distribucionPorModalidad: distribucionModalidad
+            },
+            fechaConsulta: new Date()
+        });
+        
+    } catch (err) {
+        console.error('Error al obtener estadísticas:', err);
+        res.status(500).json({ 
+            message: 'Error al obtener estadísticas', 
+            error: err.message 
+        });
+    }
+});
 
+// POST: Endpoint optimizado para iniciar el proceso de match
+router.post('/', async (req, res) => {
+    const { semestre } = req.body;
+    
+    if (!semestre || !/^\d{4}-\d$/.test(semestre)) {
+        return res.status(400).json({ 
+            message: 'El parámetro semestre es requerido y debe tener el formato "YYYY-N".' 
+        });
+    }
+    
+    try {
+        console.log(`🎯 Iniciando proceso de match optimizado para semestre: ${semestre}`);
+        const resultado = await procesarMatchOptimizado(semestre);
+        
+        res.status(201).json({
+            ...resultado,
+            timestamp: new Date(),
+            version: 'OPTIMIZADO_V2'
+        });
+        
+    } catch (error) {
+        console.error('❌ Error al crear la asignación:', error);
+        res.status(500).json({ 
+            message: 'Error interno del servidor.', 
+            error: error.message,
+            timestamp: new Date()
+        });
+    }
+});
 
-// El resto de los endpoints como /especialista/:dni y /asignacion-automatica
-// deberían seguir funcionando ya que leen de AsignacionEspecialistaDocente,
-// cuya estructura de salida no ha cambiado. Los dejo omitidos por brevedad
-// pero su lógica no necesita ser alterada.
-
+// EXPORTAR FUNCIONES PARA TESTING
 module.exports = router;
+module.exports.procesarMatchOptimizado = procesarMatchOptimizado; // Para testing

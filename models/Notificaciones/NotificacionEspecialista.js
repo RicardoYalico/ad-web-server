@@ -40,12 +40,12 @@ const NotificacionEspecialistaSchema = new Schema({
         index: true
     },
     
-    // Estado de la notificación
+    // Estado de la notificación (flujo tipo Facebook)
     estado: {
         type: String,
         required: true,
-        enum: ['NO_LEIDA', 'LEIDA', 'ARCHIVADA'],
-        default: 'NO_LEIDA',
+        enum: ['NO_VISTA', 'VISTA', 'LEIDA'],
+        default: 'NO_VISTA',
         index: true
     },
     
@@ -69,6 +69,12 @@ const NotificacionEspecialistaSchema = new Schema({
         type: String,
         enum: ['BAJA', 'MEDIA', 'ALTA'],
         default: 'MEDIA'
+    },
+    
+    // Fecha cuando fue vista en la campanita
+    fechaVista: {
+        type: Date,
+        default: null
     },
     
     // Fecha cuando fue marcada como leída
@@ -153,9 +159,9 @@ NotificacionEspecialistaSchema.statics.obtenerResumenEspecialista = async functi
     ]);
     
     return {
-        noLeidas: resumen.find(r => r._id === 'NO_LEIDA')?.count || 0,
+        noVistas: resumen.find(r => r._id === 'NO_VISTA')?.count || 0,
+        vistas: resumen.find(r => r._id === 'VISTA')?.count || 0,
         leidas: resumen.find(r => r._id === 'LEIDA')?.count || 0,
-        archivadas: resumen.find(r => r._id === 'ARCHIVADA')?.count || 0,
         total: resumen.reduce((acc, r) => acc + r.count, 0)
     };
 };

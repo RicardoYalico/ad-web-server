@@ -62,4 +62,11 @@ const ProgramacionHorariaSchema = new mongoose.Schema({
   timestamps: true,
 });
 
+// Índices compuestos para performance
+ProgramacionHorariaSchema.index({ semestre: 1, fechaCarga: -1 });
+ProgramacionHorariaSchema.index({ idDocente: 1, dia: 1 });
+ProgramacionHorariaSchema.index({ campus: 1, dia: 1, hora: 1 });
+
+// ✅ NOMBRE CORRECTO: 'ProgramacionHoraria' 
+// MongoDB creará la colección como 'programacionhorarias' (plural minúscula)
 module.exports = mongoose.model('ProgramacionHoraria', ProgramacionHorariaSchema);

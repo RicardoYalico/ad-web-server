@@ -52,7 +52,7 @@ const ReporteUnicoDocenteSchema = new mongoose.Schema({
     trim: true,
     lowercase: true, // Guardar correos en minúscula para consistencia
     // required: [true, "El correo del docente es requerido"],
-    match: [/.+\@.+\..+/, 'Por favor, ingrese un correo electrónico válido'],
+    // match: [/.+\@.+\..+/, 'Por favor, ingrese un correo electrónico válido'],
     default: ''
   },
   sedeDictado: {
