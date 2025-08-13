@@ -17,7 +17,7 @@ const EncuestaEsaSchema = new mongoose.Schema({
   nombreDocente: { type: String, trim: true, default: '' },
   totalMatriculados: { type: Number, default: 0 },
   totalEncuestados: { type: Number, default: 0 },
-  porcentajeCobertura: { type: Number, default: 0 }, // e.g., 75.5 for 75.5%
+  porcentajeCobertura: { type: String, default: '0%' }, // e.g., "75.5%" for 75.5%
   preguntaNps: { type: Number, default: null }, // Score for the NPS question itself
   preguntaContribAprendizaje: { type: Number, default: null }, // Score for this question
   promedioEsa: { type: Number, default: null }, // Overall ESA average

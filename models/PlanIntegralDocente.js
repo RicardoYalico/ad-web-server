@@ -4,12 +4,13 @@ const mongoose = require('mongoose');
 const PlanIntegralDocenteSchema = new mongoose.Schema({
   // Campos para la gestión de cargas y reportes (ya no son requeridos)
   semestre: { type: String, trim: true, default: '' },
-  fechaCarga: { type: Date, default: null },
+  fechaCarga: { type: String, default: null },
 
   // Información del Docente y Contexto Académico
   campus: { type: String, trim: true, default: '' },
   facultad: { type: String, trim: true, default: '' },
   carrera: { type: String, trim: true, default: '' },
+  programa: { type: String, trim: true, default: '' },
   modalidad: { type: String, trim: true, default: '' },
   payroll: { type: String, trim: true, default: '' },
   dni: { type: String, trim: true, default: '' }, // Ya no es requerido
