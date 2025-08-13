@@ -91,7 +91,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// POST: Crear múltiples registros de disponibilidad (carga masiva)
+// POST: Crear múltiples registros de disponibilidad (carga masiva con limpieza previa)
 router.post('/bulk', async (req, res) => {
   const recordsToInsert = req.body;
   if (!Array.isArray(recordsToInsert) || recordsToInsert.length === 0) {
@@ -99,13 +99,21 @@ router.post('/bulk', async (req, res) => {
   }
   
   try {
+    // Limpiar toda la colección antes de insertar nuevos registros
+    const deleteResult = await DisponibilidadAcompaniamiento.deleteMany({});
+    console.log(`Se eliminaron ${deleteResult.deletedCount} registros existentes de la colección.`);
+    
+    // Insertar los nuevos registros
     const result = await DisponibilidadAcompaniamiento.insertMany(recordsToInsert, { ordered: false });
+    
     res.status(201).json({
-      message: `${result.length} registros de disponibilidad intentados para inserción.`,
+      message: `Colección limpiada exitosamente. ${result.length} nuevos registros de disponibilidad insertados.`,
+      deletedCount: deleteResult.deletedCount,
       insertedCount: result.length,
     });
   } catch (err) {
     console.error("Error en carga masiva de disponibilidad:", err);
+    
     if (err.name === 'MongoBulkWriteError' || err.code === 11000) {
       const errorDetails = err.writeErrors
         ? err.writeErrors.map(e => ({
@@ -116,10 +124,11 @@ router.post('/bulk', async (req, res) => {
           }))
         : { generalMessage: err.message, code: err.code };
       return res.status(400).json({
-        message: "Error durante la carga masiva de disponibilidad. Algunos registros podrían no haberse insertado (posiblemente duplicados).",
+        message: "Error durante la carga masiva de disponibilidad después de limpiar la colección. Algunos registros podrían no haberse insertado.",
         details: errorDetails
       });
     }
+    
     res.status(500).json({ message: "Error interno del servidor durante la carga masiva: " + err.message });
   }
 });
