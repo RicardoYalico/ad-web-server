@@ -2,29 +2,18 @@
 const mongoose = require('mongoose');
 
 const DisponibilidadAcompaniamientoSchema = new mongoose.Schema({
-  // Campos generales (no arrays)
-  apellidosNombresCompletos: { type: String, trim: true },
+  nombre: { type: String, trim: true },
   dni: { type: String, trim: true },
-  horasDisponiblesParaRealizarAcompaniamientoPresencial: { type: Number, default: 0 },
-  
-  // --- NUEVO CAMPO AÑADIDO ---
-  // Columna para la antigüedad, tipo Objeto.
-  // Puedes usar un objeto genérico o definir una estructura más específica como en el ejemplo comentado.
-  antiguedad: {type: String, trim: true, default: ''},
-  segmentos: { type: Array, default: [] },
-  asumePIDDNuevos: { type: Boolean, default: false },
-  modalidadAcompaniamiento: { type: Object, default: {
-     modalidad: {type: String, trim: true, default: 'PRESENCIAL'},
-     puedeOtros: {type: Boolean, default: true}
-    }}, 
+  antiguedad: {type: String, trim: true},
+  segmentosPreferencia: { type: Array, default: [] },
+  modalidadPreferencia: { type: Array, default: [] },
+  sedePreferencia: { type: Array, default: [] },
+  disponibilidadHoras: { type: Number, default: 0 },
 
   // Arrays de disponibilidad
-  disponibilidades: [{
-    sede1DePreferenciaPresencial: { type: String, trim: true, default: '' },
-    dia: { type: String, trim: true, default: '' }, // Ej: LUNES, MARTES
-    franja: { type: String, trim: true, default: '' }, // Ej: "0730 - 0900"
-    hora: { type: String, trim: true, default: '' }, // Ej: MAÑANA, TARDE, NOCHE
-    turno: { type: String, trim: true, default: '' }, // M, T, N (Mañana, Tarde, Noche)
+  horarios: [{
+    dia: { type: String, trim: true, default: '' },
+    franja: { type: String, trim: true, default: '' },
   }],
  
 }, {
