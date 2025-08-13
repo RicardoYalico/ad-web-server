@@ -10,6 +10,7 @@ const PlanIntegralDocenteSchema = new mongoose.Schema({
   campus: { type: String, trim: true, default: '' },
   facultad: { type: String, trim: true, default: '' },
   carrera: { type: String, trim: true, default: '' },
+  programa: { type: String, trim: true, default: '' },
   modalidad: { type: String, trim: true, default: '' },
   payroll: { type: String, trim: true, default: '' },
   dni: { type: String, trim: true, default: '' }, // Ya no es requerido

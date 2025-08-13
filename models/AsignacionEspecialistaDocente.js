@@ -39,6 +39,7 @@ const HorarioSchema = new Schema({
  */
 const CursoSchema = new Schema({
   nombreCurso: { type: String, trim: true },
+  supermalla: { type: Object, required: false }, // o mongoose.Schema.Types.Mixed
   codCurso: { type: String, trim: true },
   seccion: { type: String, trim: true },
   periodo: { type: String, trim: true },
@@ -57,9 +58,19 @@ const AsignacionEspecialistaDocenteSchema = new Schema({
   idDocente: { type: String, required: true, trim: true, index: true },
   docente: { type: String, required: true, trim: true },
   RolColaborador: { type: String, trim: true },
+  facultad: { type: String, trim: true },
   programa: { type: String, trim: true },
   modalidad: { type: String, trim: true },
   promedioEsa: { type: Number },
+    // --- CURSOS CON HORARIOS ENRIQUECIDOS ---
+  segmento: {
+        type: Object, // o mongoose.Schema.Types.Mixed
+        required: false // O true, dependiendo de tus reglas de negocio
+    },
+    segmentos: {
+        type: Array, // o mongoose.Schema.Types.Mixed
+        required: false // O true, dependiendo de tus reglas de negocio
+    },
   semestre: { type: String, trim: true, index: true },
   estadoHistorico: { type: String, trim: true },
   
@@ -72,11 +83,32 @@ const AsignacionEspecialistaDocenteSchema = new Schema({
   // --- CURSOS CON HORARIOS ENRIQUECIDOS ---
   cursos: [CursoSchema],
 
+  inducciondocente: {
+        type: Object, // o mongoose.Schema.Types.Mixed
+        required: false // O true, dependiendo de tus reglas de negocio
+    },
     // --- CURSOS CON HORARIOS ENRIQUECIDOS ---
   pidd: {
         type: Object, // o mongoose.Schema.Types.Mixed
         required: false // O true, dependiendo de tus reglas de negocio
     },
+  rud: {
+        type: Object, // o mongoose.Schema.Types.Mixed
+        required: false // O true, dependiendo de tus reglas de negocio
+  },
+  esa: {
+    type: Object, // o mongoose.Schema.Types.Mixed
+    required: false // O true, dependiendo de tus reglas de negocio
+  },
+  programacion: {
+    type: Array, // o mongoose.Schema.Types.Mixed
+    required: false // O true, dependiendo de tus reglas de negocio
+  },
+
+  asignaciones: {
+    type: Array, // o mongoose.Schema.Types.Mixed 
+    required: false // O true, dependiendo de tus reglas de negocio
+  },
 
   // --- METADATOS DE LA EJECUCIÓN ---
   estadoGeneral: {

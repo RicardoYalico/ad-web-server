@@ -129,6 +129,10 @@ mongoose.connect(process.env.MONGODB_URI)
             name: 'dni_1', 
             def: { dni: 1 } 
           },
+                    { 
+            name: 'dia_1_sede1DePreferenciaPresencial_1', 
+            def: { dia: 1, sede1DePreferenciaPresencial: 1 } 
+          },
           { 
             name: 'dia_1_sede1DePreferenciaPresencial_1_franja_1', 
             def: { dia: 1, sede1DePreferenciaPresencial: 1, franja: 1 } 
@@ -227,6 +231,12 @@ app.use('/api/historial-asignaciones', historialRoutes);
 
 const notificaciones = require('./routes/notificaciones');
 app.use('/api/notificaciones', notificaciones);
+
+const segmentaciones = require('./routes/segmentaciones');
+app.use('/api/segmentaciones', segmentaciones);
+
+const induccionDocente = require('./routes/induccionDocente');
+app.use('/api/induccion-docente', induccionDocente);
 
 app.get('/', (req, res) => {
   res.send('API de Gestión Educativa funcionando!');

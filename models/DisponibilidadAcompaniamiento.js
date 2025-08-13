@@ -2,27 +2,33 @@
 const mongoose = require('mongoose');
 
 const DisponibilidadAcompaniamientoSchema = new mongoose.Schema({
-  apellidosNombresCompletos: { type: String, trim: true},
-  dni: { type: String, trim: true},
+  // Campos generales (no arrays)
+  apellidosNombresCompletos: { type: String, trim: true },
+  dni: { type: String, trim: true },
   horasDisponiblesParaRealizarAcompaniamientoPresencial: { type: Number, default: 0 },
-  horasDisponiblesParaRealizarAcompaniamientoRemoto: { type: Number, default: 0 },
-  sede1DePreferenciaPresencial: { type: String, trim: true, default: '' },
-  dia: { type: String, trim: true, default: '' }, // Ej: LUNES, MARTES
-  franja: { type: String, trim: true, default: '' }, // Ej: "0730 - 0900"
-  hora: { type: String, trim: true, default: '' }, // Ej: MAÑANA, TARDE, NOCHE
-  turno: { type: String, trim: true, default: '' }, // M, T, N (Mañana, Tarde, Noche)
-  // Considera añadir un campo para el periodo académico si es relevante
-  // periodoAcademico: { type: String, trim: true },
+  
+  // --- NUEVO CAMPO AÑADIDO ---
+  // Columna para la antigüedad, tipo Objeto.
+  // Puedes usar un objeto genérico o definir una estructura más específica como en el ejemplo comentado.
+  antiguedad: {type: String, trim: true, default: ''},
+  segmentos: { type: Array, default: [] },
+  asumePIDDNuevos: { type: Boolean, default: false },
+  modalidadAcompaniamiento: { type: Object, default: {
+     modalidad: {type: String, trim: true, default: 'PRESENCIAL'},
+     puedeOtros: {type: Boolean, default: true}
+    }}, 
+
+  // Arrays de disponibilidad
+  disponibilidades: [{
+    sede1DePreferenciaPresencial: { type: String, trim: true, default: '' },
+    dia: { type: String, trim: true, default: '' }, // Ej: LUNES, MARTES
+    franja: { type: String, trim: true, default: '' }, // Ej: "0730 - 0900"
+    hora: { type: String, trim: true, default: '' }, // Ej: MAÑANA, TARDE, NOCHE
+    turno: { type: String, trim: true, default: '' }, // M, T, N (Mañana, Tarde, Noche)
+  }],
+ 
 }, {
   timestamps: true,
 });
-
-// Para evitar duplicados exactos de la misma disponibilidad horaria para el mismo DNI y sede/dia/franja
-// Esto es un ejemplo, ajústalo a la unicidad real que necesites.
-// DisponibilidadAcompaniamientoSchema.index(
-//   { dni: 1, sede1DePreferenciaPresencial: 1, dia: 1, franja: 1, turno: 1 /* , periodoAcademico: 1 */ },
-//   { unique: true, message: 'Ya existe una disponibilidad registrada con estos mismos datos para el DNI.' }
-// );
-
 
 module.exports = mongoose.model('DisponibilidadAcompaniamiento', DisponibilidadAcompaniamientoSchema);
