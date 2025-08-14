@@ -2,15 +2,16 @@
  * Este archivo contiene la lógica y los endpoints para realizar el "match"
  * entre docentes y especialistas, incluyendo la exportación de datos.
  *
- * Versión Refactorizada 10.1 (Corrección de Filtro de Segmento):
- * - CORRECCIÓN CRÍTICA: Se ajusta la lógica de `findAndAssign` para que el filtro de
- * especialistas se base en los segmentos específicos de las actividades del período
- * actual, en lugar de todos los segmentos del docente.
- * - REGLA DE NEGOCIO MÁS ESTRICTA: Se cambia el método de comprobación de `.some()` a `.every()`
- * para garantizar que un especialista sea compatible con TODOS los segmentos requeridos
- * en un período de asignación, no solo con uno de ellos. Esto evita asignaciones incorrectas
- * como la reportada (asignar actividad PIDD a especialista no compatible con PIDD).
- * - Se mantiene la arquitectura general de la v10.0.
+ * Versión Refactorizada 10.2 (Estrategia de Asignación Configurable):
+ * - AÑADIDO: Se introduce un objeto `CONFIG` para parametrizar el comportamiento del script.
+ * - AÑADIDO: `CONFIG.ESTRATEGIA_ASIGNACION` permite elegir entre:
+ * - 'BALANCEADO': Distribuye la carga equitativamente entre especialistas (comportamiento anterior).
+ * - 'CONSOLIDADO': Intenta llenar la capacidad de un especialista antes de pasar al siguiente,
+ * para minimizar la cantidad de especialistas utilizados.
+ * - AÑADIDO: `CONFIG.DURACION_SESION_NO_PRESENCIAL_MINUTOS` (fijado en 90) para estandarizar
+ * el cálculo de consumo de horas en modalidades flexibles.
+ * - MODIFICADO: La función `findAndAssign` ahora ordena a los especialistas candidatos
+ * según la estrategia seleccionada en la configuración.
  */
 const express = require('express');
 const router = express.Router();
@@ -23,6 +24,18 @@ const DisponibilidadAcompaniamiento = require('../models/DisponibilidadAcompania
 
 // --- CONSTANTES DE NEGOCIO ---
 const FECHA_INICIO_SEMESTRE_BASE = '2025-08-06T00:00:00Z'; // Fecha de inicio del ciclo
+
+// --- CONFIGURACIÓN DEL PROCESO ---
+const CONFIG = {
+    // Estrategia de asignación:
+    // 'BALANCEADO': Distribuye los docentes equitativamente entre los especialistas (menor carga primero).
+    // 'CONSOLIDADO': Intenta llenar la capacidad de un especialista antes de pasar al siguiente (mayor carga primero).
+    ESTRATEGIA_ASIGNACION: 'BALANCEADO',
+    // Duración en minutos para sesiones de modalidades no presenciales (Síncrono, Virtual, Tesis).
+    DURACION_SESION_NO_PRESENCIAL_MINUTOS: 90,
+    RANGO_SEMANAS_A_PROCESAR: ['0-2', '3-9'],
+
+};
 
 
 // ===== FUNCIONES AUXILIARES =====
@@ -243,7 +256,7 @@ async function procesarMatch(semestre) {
     const matchesCount = nuevasAsignaciones.filter(a => a.asignaciones && a.asignaciones.length > 0).length;
 
     return {
-        message: 'Proceso de match v10.1 finalizado.',
+        message: `Proceso de match v10.2 finalizado con estrategia: ${CONFIG.ESTRATEGIA_ASIGNACION}.`,
         totalProcesados: nuevasAsignaciones.length,
         matches: matchesCount,
         sinMatch: nuevasAsignaciones.length - matchesCount,
@@ -252,114 +265,85 @@ async function procesarMatch(semestre) {
 
 
 // ===== FUNCIÓN DE PROCESAMIENTO INDIVIDUAL =====
-
+/**
+ * REFACTORIZADO PARA MÚLTIPLES ESPECIALISTAS Y PROCESAMIENTO SELECTIVO DE SEMANAS:
+ * Procesa las agrupaciones de actividades de un docente, respetando el filtro de semanas
+ * definido en CONFIG.RANGO_SEMANAS_A_PROCESAR.
+ * Puede asignar diferentes especialistas a un mismo docente para diferentes periodos o segmentos.
+ */
 async function procesarAsignacionParaDocente(perfilOriginal, datos) {
+    // Copia profunda para evitar mutaciones inesperadas del objeto original
     const perfil = JSON.parse(JSON.stringify(perfilOriginal));
-    const {
-        fechaHoraEjecucion
-    } = datos;
+    const { fechaHoraEjecucion } = datos;
 
-    const asignacionesOriginales = perfil.asignaciones || [];
-
-    const todasLasActividades = perfil.segmentos?.flatMap(s => s.actividades.map(a => ({ ...a,
-        segmento: s.segmento
-    }))) || [];
+    // Agrupamos todas las actividades del docente por su rango de semanas.
+    const todasLasActividades = perfil.segmentos?.flatMap(s => s.actividades.map(a => ({ ...a, segmento: s.segmento }))) || [];
     const actividadesPorPeriodo = new Map();
     for (const act of todasLasActividades) {
-        if (!actividadesPorPeriodo.has(act.semana)) actividadesPorPeriodo.set(act.semana, []);
+        if (!actividadesPorPeriodo.has(act.semana)) {
+            actividadesPorPeriodo.set(act.semana, []);
+        }
         actividadesPorPeriodo.get(act.semana).push(act);
     }
 
-    let rangoSemanasActual = null;
-    let fechaInicioBusqueda = null;
+    const nuevasAsignacionesDelDocente = [];
 
-    for (const rango of actividadesPorPeriodo.keys()) {
-        const {
+    // Iteramos sobre cada periodo de semanas que tiene actividades programadas.
+    for (const [rangoSemanas, actividadesDelPeriodo] of actividadesPorPeriodo.entries()) {
+        
+        // CAMBIO CLAVE: Verificar si este rango de semanas debe ser procesado según la configuración.
+        if (CONFIG.RANGO_SEMANAS_A_PROCESAR !== 'TODAS' && !CONFIG.RANGO_SEMANAS_A_PROCESAR.includes(rangoSemanas)) {
+            continue; // Si no está en la lista de semanas a procesar, lo saltamos.
+        }
+
+        // Obtenemos la fecha de inicio de este periodo para el cálculo de carga semanal.
+        const { fechaInicio } = getPeriodoDeSemanas(rangoSemanas, perfil.semestre);
+        if (!fechaInicio) continue; // Si el rango es inválido, lo saltamos.
+
+        // Identificamos los segmentos únicos para este periodo específico.
+        const segmentosDelPeriodo = new Set(actividadesDelPeriodo.map(a => normalizarString(a.segmento)));
+        if (segmentosDelPeriodo.size === 0) {
+            continue; // No hay nada que asignar si no hay segmentos.
+        }
+
+        // Buscamos un especialista. La función findAndAssign ya considera la modalidad,
+        // los segmentos del periodo y la disponibilidad horaria.
+        const resultado = findAndAssign(
+            perfil,
+            perfil.cursos,
+            perfil.modalidad,
+            null, // Buscamos al mejor especialista disponible, sin preferencias previas.
             fechaInicio,
-            fechaFin
-        } = getPeriodoDeSemanas(rango, perfil.semestre);
-        if (fechaInicio && fechaFin && fechaHoraEjecucion >= fechaInicio && fechaHoraEjecucion <= fechaFin) {
-            rangoSemanasActual = rango;
-            fechaInicioBusqueda = fechaInicio;
-            break;
-        }
-    }
+            segmentosDelPeriodo,
+            datos
+        );
 
-    if (!rangoSemanasActual) {
-        perfil.asignaciones = [];
-        return perfil;
-    }
-
-    const asignacionExistenteParaPeriodoActual = asignacionesOriginales.find(asig =>
-        asig.actividades.some(act => act.semana === rangoSemanasActual)
-    );
-
-    if (asignacionExistenteParaPeriodoActual) {
-        perfil.asignaciones = [asignacionExistenteParaPeriodoActual];
-        return perfil;
-    }
-
-    const actividadesDelPeriodo = actividadesPorPeriodo.get(rangoSemanasActual);
-    // **INICIO CAMBIO v10.1**: Obtener los segmentos específicos para este período.
-    const segmentosDelPeriodo = new Set(actividadesDelPeriodo.map(a => normalizarString(a.segmento)));
-    if (segmentosDelPeriodo.size === 0) { // Si no hay actividades, no hay nada que asignar
-        perfil.asignaciones = [];
-        return perfil;
-    }
-    // **FIN CAMBIO v10.1**
-
-    const especialistasExistentes = asignacionesOriginales
-        .map(a => ({
-            dni: a.especialistaDni,
-            nombre: a.nombreEspecialista
-        }))
-        .filter((v, i, a) => a.findIndex(t => (t.dni === v.dni)) === i);
-
-    let asignacionCreada = null;
-
-    for (const esp of especialistasExistentes) {
-        // **CAMBIO v10.1**: Pasar los segmentos del período a la función de búsqueda.
-        const resultado = findAndAssign(perfil, perfil.cursos, perfil.modalidad, esp, fechaInicioBusqueda, segmentosDelPeriodo, datos);
         if (resultado) {
-            const {
-                horario
-            } = resultado;
-            asignacionCreada = {
-                especialistaDni: esp.dni,
-                nombreEspecialista: esp.nombre,
-                horarioAsignado: horario,
-                actividades: actividadesDelPeriodo,
-                estado: "Planificado"
-            };
-            break;
-        }
-    }
-
-    if (!asignacionCreada) {
-        // **CAMBIO v10.1**: Pasar los segmentos del período a la función de búsqueda.
-        const resultado = findAndAssign(perfil, perfil.cursos, perfil.modalidad, null, fechaInicioBusqueda, segmentosDelPeriodo, datos);
-        if (resultado) {
-            const {
-                especialista,
-                horario
-            } = resultado;
-            asignacionCreada = {
+            const { especialista, horario } = resultado;
+            
+            const asignacionCreada = {
+                // Usamos un ID único para la asignación por si se necesita en el futuro.
+                _id: new mongoose.Types.ObjectId(), 
                 especialistaDni: especialista.dni,
                 nombreEspecialista: especialista.nombre,
                 horarioAsignado: horario,
-                actividades: actividadesDelPeriodo,
+                actividades: actividadesDelPeriodo, // Le asignamos solo las actividades de este periodo.
                 estado: "Planificado"
             };
+            
+            // Añadimos la nueva asignación a nuestra lista acumulada.
+            nuevasAsignacionesDelDocente.push(asignacionCreada);
+
+            // Actualizamos la carga de docentes del especialista para que
+            // las siguientes iteraciones (de otros docentes) lo tomen en cuenta.
             datos.cargaDocentesEspecialistas.set(especialista.dni, (datos.cargaDocentesEspecialistas.get(especialista.dni) || 0) + 1);
         }
     }
 
-    if (asignacionCreada) {
-        perfil.asignaciones = [asignacionCreada];
-    } else {
-        perfil.asignaciones = [];
-    }
+    // Reemplazamos las asignaciones antiguas con la nueva lista completa.
+    perfil.asignaciones = nuevasAsignacionesDelDocente;
 
+    // Limpieza final del perfil antes de devolverlo.
     delete perfil.especialistaDni;
     delete perfil.nombreEspecialista;
     perfil.cursos.forEach(c => c.horarios.forEach(h => delete h.acompanamiento));
@@ -369,8 +353,8 @@ async function procesarAsignacionParaDocente(perfilOriginal, datos) {
 
 
 /**
- * **REFACTORIZADO v10.1**: Encuentra y asigna un especialista compatible basándose en el nuevo modelo de preferencias
- * y en los segmentos específicos del período a asignar.
+ * **REFACTORIZADO v10.2**: Encuentra y asigna un especialista compatible basándose en la estrategia
+ * de asignación ('BALANCEADO' o 'CONSOLIDADO') definida en la configuración.
  */
 function findAndAssign(perfil, cursosParaAsignar, modalidadDocente, especialistaPreferido, fechaInicioBusqueda, segmentosDelPeriodo, datos) {
     const {
@@ -387,10 +371,8 @@ function findAndAssign(perfil, cursosParaAsignar, modalidadDocente, especialista
         return (consumidas + costo) <= limite;
     };
 
-    // --- INICIO: Lógica de filtrado de especialistas basada en preferencias ---
     const modalidadNormalizadaDocente = normalizarString(modalidadDocente);
 
-    // 1. Determinar el pool inicial de especialistas a considerar
     let poolDeEspecialistas;
     if (especialistaPreferido) {
         poolDeEspecialistas = todosLosEspecialistas.filter(e => e.dni === especialistaPreferido.dni);
@@ -399,29 +381,20 @@ function findAndAssign(perfil, cursosParaAsignar, modalidadDocente, especialista
         poolDeEspecialistas = todosLosEspecialistas.filter(e => !dnisYaAsignados.has(e.dni));
     }
 
-    // 2. Filtrar el pool por compatibilidad de segmento y modalidad
     let especialistasCompatibles = poolDeEspecialistas.filter(esp => {
         const info = infoEspecialistas.get(esp.dni);
         if (!info) return false;
-
-        // Chequeo de modalidad: ¿El especialista atiende la modalidad del docente?
         const atiendeModalidad = info.preferencias.modalidades.includes(modalidadNormalizadaDocente);
         if (!atiendeModalidad) return false;
-
-        // **INICIO CAMBIO v10.1**: El especialista debe ser compatible con TODOS los segmentos del período.
         const atiendeTodosLosSegmentos = [...segmentosDelPeriodo].every(seg => info.preferencias.segmentos.includes(seg));
         return atiendeTodosLosSegmentos;
-        // **FIN CAMBIO v10.1**
     });
-    // --- FIN: Lógica de filtrado ---
 
     let mejorOpcion = null;
     const weekKey = getWeekKey(fechaInicioBusqueda);
     if (!weekKey) return null;
 
-    // --- Lógica de asignación por modalidad del DOCENTE ---
     if (modalidadNormalizadaDocente.includes('PRESENCIAL') || modalidadNormalizadaDocente.includes('HIBRIDO')) {
-        // --- MATCH ESTRICTO PARA PRESENCIAL ---
         let cursosDeBusqueda = cursosParaAsignar;
         if (perfil.pidd && perfil.pidd.tipoPlanIntegral?.includes('CURSO') && perfil.pidd.nombreCurso) {
             const cursosPidd = cursosParaAsignar.filter(c => c.nombreCurso === perfil.pidd.nombreCurso);
@@ -432,7 +405,7 @@ function findAndAssign(perfil, cursosParaAsignar, modalidadDocente, especialista
         const potencialesAsignaciones = [];
 
         for (const horario of horariosParaBuscar) {
-            for (const esp of especialistasCompatibles) { // Iterar sobre la lista ya filtrada
+            for (const esp of especialistasCompatibles) {
                 const infoEsp = infoEspecialistas.get(esp.dni);
                 const horariosEsp = disponibilidadPorEspecialista.get(esp.dni);
 
@@ -451,14 +424,28 @@ function findAndAssign(perfil, cursosParaAsignar, modalidadDocente, especialista
         }
 
         if (potencialesAsignaciones.length > 0) {
-            potencialesAsignaciones.sort((a, b) => a.carga - b.carga); // Asignar al de menor carga
+            // **CAMBIO v10.2**: Ordenar según la estrategia de asignación.
+            potencialesAsignaciones.sort((a, b) => {
+                if (CONFIG.ESTRATEGIA_ASIGNACION === 'CONSOLIDADO') {
+                    return b.carga - a.carga; // DE MAYOR A MENOR CARGA
+                }
+                return a.carga - b.carga; // DE MENOR A MAYOR CARGA (BALANCEADO)
+            });
             mejorOpcion = potencialesAsignaciones[0];
         }
     } else {
-        // --- MATCH FLEXIBLE PARA OTRAS MODALIDADES (SÍNCRONO, VIRTUAL, TESIS) ---
-        const costoActividadFlexible = 1.5;
+        // **CAMBIO v10.2**: Usar duración de sesión configurable.
+        const costoActividadFlexible = CONFIG.DURACION_SESION_NO_PRESENCIAL_MINUTOS / 60;
 
-        const especialistasOrdenados = especialistasCompatibles.sort((a, b) => (cargaDocentesEspecialistas.get(a.dni) || 0) - (cargaDocentesEspecialistas.get(b.dni) || 0));
+        // **CAMBIO v10.2**: Ordenar especialistas según la estrategia definida en la configuración.
+        const especialistasOrdenados = especialistasCompatibles.sort((a, b) => {
+            const cargaA = cargaDocentesEspecialistas.get(a.dni) || 0;
+            const cargaB = cargaDocentesEspecialistas.get(b.dni) || 0;
+            if (CONFIG.ESTRATEGIA_ASIGNACION === 'CONSOLIDADO') {
+                return cargaB - cargaA; // DE MAYOR A MENOR CARGA
+            }
+            return cargaA - cargaB; // DE MENOR A MAYOR CARGA (BALANCEADO)
+        });
 
         for (const esp of especialistasOrdenados) {
             if (tieneHorasSemanalesDisponibles(esp.dni, costoActividadFlexible, weekKey)) {
@@ -485,10 +472,16 @@ function findAndAssign(perfil, cursosParaAsignar, modalidadDocente, especialista
                 const info = infoEspecialistas.get(esp.dni);
                 if (!info) return false;
                 const atiendeModalidadPresencial = info.preferencias.modalidades.includes('PRESENCIAL');
-                // **CAMBIO v10.1**: Usar el filtro estricto también para el fallback.
                 const atiendeTodosLosSegmentos = [...segmentosDelPeriodo].every(seg => info.preferencias.segmentos.includes(seg));
                 return atiendeModalidadPresencial && atiendeTodosLosSegmentos;
-            }).sort((a, b) => (cargaDocentesEspecialistas.get(a.dni) || 0) - (cargaDocentesEspecialistas.get(b.dni) || 0));
+            }).sort((a, b) => { // **CAMBIO v10.2**: Aplicar estrategia también en fallback.
+                const cargaA = cargaDocentesEspecialistas.get(a.dni) || 0;
+                const cargaB = cargaDocentesEspecialistas.get(b.dni) || 0;
+                if (CONFIG.ESTRATEGIA_ASIGNACION === 'CONSOLIDADO') {
+                    return cargaB - cargaA;
+                }
+                return cargaA - cargaB;
+            });
 
             for (const esp of especialistasPresencialesFallback) {
                 if (tieneHorasSemanalesDisponibles(esp.dni, costoActividadFlexible, weekKey)) {
@@ -520,7 +513,6 @@ function findAndAssign(perfil, cursosParaAsignar, modalidadDocente, especialista
     }
 
     if (!mejorOpcion && especialistaPreferido) {
-        // **CAMBIO v10.1**: Pasar los segmentos del período en la llamada recursiva.
         return findAndAssign(perfil, cursosParaAsignar, modalidadDocente, null, fechaInicioBusqueda, segmentosDelPeriodo, datos);
     }
 

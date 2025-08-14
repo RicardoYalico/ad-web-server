@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const DisponibilidadAcompaniamientoSchema = new mongoose.Schema({
   nombre: { type: String, trim: true },
   dni: { type: String, trim: true },
+  notaRubrica: { type: Number, default: 0 },
   antiguedad: {type: String, trim: true},
   segmentosPreferencia: { type: Array, default: [] },
   modalidadPreferencia: { type: Array, default: [] },

@@ -311,71 +311,96 @@ router.delete('/:id', getDisponibilidad, async (req, res) => {
   }
 });
 
-// PUT: Reemplazar completamente el calendario de disponibilidad de un especialista
-router.put('/especialista/:dni/calendario', async (req, res) => {
-  try {
-    const { dni } = req.params;
-    const { 
-      apellidosNombresCompletos, 
-      horasDisponiblesParaRealizarAcompaniamientoPresencial,
-      disponibilidades 
-    } = req.body;
-    
-    // Validar DNI
-    if (!dni || dni.trim() === '') {
-      return res.status(400).json({ message: 'El DNI es requerido y no puede estar vacío' });
-    }
-    
-    // Validar que disponibilidades sea un array (dentro del objeto del body)
-    if (!Array.isArray(disponibilidades)) {
-      return res.status(400).json({ message: 'El campo "disponibilidades" debe ser un array' });
-    }
-    
-    const dniTrimmed = dni.trim();
-    
-    // Usar findOneAndUpdate con 'upsert: true' para simplificar la lógica de crear o actualizar
-    const updatePayload = {
-      $set: {
-        dni: dniTrimmed,
-        apellidosNombresCompletos,
-        horasDisponiblesParaRealizarAcompaniamientoPresencial: horasDisponiblesParaRealizarAcompaniamientoPresencial || 0,
-        disponibilidades
-      }
-    };
-    
-    const options = {
-      upsert: true, // Crea el documento si no existe
-      new: true, // Devuelve el documento modificado
-      runValidators: true // Ejecuta las validaciones del Schema
-    };
-
-    const calendarioActualizado = await DisponibilidadAcompaniamiento.findOneAndUpdate({ dni: dniTrimmed }, updatePayload, options);
-    
-    // --- CORRECCIÓN CLAVE AQUÍ ---
-    // Se devuelve la clave 'calendarioActualizado' que el frontend espera.
-    res.json({
-      message: 'Calendario actualizado exitosamente',
-      calendarioActualizado: calendarioActualizado 
-    });
-
-  } catch (err) {
-    console.error("Error al actualizar calendario completo:", err);
-    
-    if (err.name === 'ValidationError') {
-      let errors = {};
-      Object.keys(err.errors).forEach((key) => {
-        errors[key] = err.errors[key].message;
-      });
-      return res.status(400).json({ 
-        message: "Error de validación en el calendario", 
-        errors 
-      });
-    }
-    
-    res.status(500).json({ 
-      message: "Error interno del servidor al actualizar el calendario: " + err.message 
-    });
-  }
+// PUT: Reemplazar completamente el perfil de disponibilidad de un especialista
+router.put('/especialista/:dni/perfil', async (req, res) => {
+  try {
+    const { dni } = req.params;
+    const { 
+      nombre,
+      antiguedad,
+      segmentosPreferencia,
+      modalidadPreferencia,
+      sedePreferencia,
+      disponibilidadHoras,
+      horarios 
+    } = req.body;
+    
+    // Validar DNI
+    if (!dni || dni.trim() === '') {
+      return res.status(400).json({ message: 'El DNI es requerido y no puede estar vacío' });
+    }
+    
+    // Validar que horarios sea un array (si se proporciona)
+    if (horarios && !Array.isArray(horarios)) {
+      return res.status(400).json({ message: 'El campo "horarios" debe ser un array' });
+    }
+    
+    // Validar que las preferencias sean arrays (si se proporcionan)
+    if (segmentosPreferencia && !Array.isArray(segmentosPreferencia)) {
+      return res.status(400).json({ message: 'El campo "segmentosPreferencia" debe ser un array' });
+    }
+    
+    if (modalidadPreferencia && !Array.isArray(modalidadPreferencia)) {
+      return res.status(400).json({ message: 'El campo "modalidadPreferencia" debe ser un array' });
+    }
+    
+    if (sedePreferencia && !Array.isArray(sedePreferencia)) {
+      return res.status(400).json({ message: 'El campo "sedePreferencia" debe ser un array' });
+    }
+    
+    const dniTrimmed = dni.trim();
+    
+    // Construir el payload de actualización dinámicamente
+    const updatePayload = {
+      $set: {
+        dni: dniTrimmed
+      }
+    };
+    
+    // Agregar campos solo si están presentes en el body
+    if (nombre !== undefined) updatePayload.$set.nombre = nombre;
+    if (antiguedad !== undefined) updatePayload.$set.antiguedad = antiguedad;
+    if (segmentosPreferencia !== undefined) updatePayload.$set.segmentosPreferencia = segmentosPreferencia;
+    if (modalidadPreferencia !== undefined) updatePayload.$set.modalidadPreferencia = modalidadPreferencia;
+    if (sedePreferencia !== undefined) updatePayload.$set.sedePreferencia = sedePreferencia;
+    if (disponibilidadHoras !== undefined) updatePayload.$set.disponibilidadHoras = disponibilidadHoras || 0;
+    if (horarios !== undefined) updatePayload.$set.horarios = horarios;
+    
+    const options = {
+      upsert: true, // Crea el documento si no existe
+      new: true, // Devuelve el documento modificado
+      runValidators: true // Ejecuta las validaciones del Schema
+    };
+    
+    const perfilActualizado = await DisponibilidadAcompaniamiento.findOneAndUpdate(
+      { dni: dniTrimmed }, 
+      updatePayload, 
+      options
+    );
+    
+    res.json({
+      message: 'Perfil de especialista actualizado exitosamente',
+      perfilActualizado: perfilActualizado 
+    });
+    
+  } catch (err) {
+    console.error("Error al actualizar perfil del especialista:", err);
+    
+    if (err.name === 'ValidationError') {
+      let errors = {};
+      Object.keys(err.errors).forEach((key) => {
+        errors[key] = err.errors[key].message;
+      });
+      return res.status(400).json({ 
+        message: "Error de validación en el perfil del especialista", 
+        errors 
+      });
+    }
+    
+    res.status(500).json({ 
+      message: "Error interno del servidor al actualizar el perfil: " + err.message 
+    });
+  }
 });
 
 // GET: Obtener calendario formateado de un especialista

@@ -58,28 +58,28 @@ const CONFIG = {
         },
         ACTIVIDADES: {
             'NUEVO': [
-                { actividad: "Asesoría", semana: "0-2", matchHorario: true },
-                { actividad: "Seguimiento", semana: "3-9", matchHorario: true },
-                { actividad: "Seguimiento", semana: "10-16", matchHorario: false },
+                { actividad: "Asesoría", semana: "0-2"},
+                { actividad: "Seguimiento", semana: "3-9"},
+                { actividad: "Seguimiento", semana: "10-16"},
             ],
             'PIDD': [
-                { actividad: "Asesoría", semana: "0-2", matchHorario: true },
-                { actividad: "Seguimiento", semana: "3-9", matchHorario: true },
-                { actividad: "Seguimiento", semana: "10-16", matchHorario: true },
+                { actividad: "Asesoría", semana: "0-2"},
+                { actividad: "Seguimiento", semana: "3-9"},
+                { actividad: "Seguimiento", semana: "10-16"},
             ],
             'MALLA 2025': [
-                { actividad: "Seguimiento", semana: "3-9", matchHorario: true },
+                { actividad: "Seguimiento", semana: "3-9"},
             ],
             'C': [
-                { actividad: "Seguimiento", semana: "3-9", matchHorario: true },
-                { actividad: "Seguimiento", semana: "10-16", matchHorario: true },
+                { actividad: "Seguimiento", semana: "3-9"},
+                { actividad: "Seguimiento", semana: "10-16"},
             ],
             'B': [
-                { actividad: "Seguimiento", semana: "3-9", matchHorario: false },
-                { actividad: "Seguimiento", semana: "10-16", matchHorario: false },
+                { actividad: "Seguimiento", semana: "3-9"},
+                { actividad: "Seguimiento", semana: "10-16"},
             ],
             'A': [
-                { actividad: "Seguimiento", semana: "10-16", matchHorario: false },
+                { actividad: "Seguimiento", semana: "10-16"},
             ]
         }
     }
